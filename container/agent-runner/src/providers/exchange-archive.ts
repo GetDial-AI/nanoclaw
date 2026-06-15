@@ -82,13 +82,14 @@ function threadArchiveFilename(
   const thread = sanitizeSlug(continuation || 'no-thread').slice(0, 48) || 'no-thread';
   const suffix = `${sanitizeSlug(provider)}-${thread}.md`;
   // Stable across appends: reuse this thread's existing file (whatever date it
-  // was first created on) so later exchanges keep landing in one file; only
-  // stamp the creation date when none exists yet. Keeps conversations/ sortable
-  // by name (thread start date) while staying one-file-per-thread. slice(11)
-  // strips the `YYYY-MM-DD-` prefix for an exact suffix match (no substring
-  // false-positives between threads with shared prefixes).
+  // was first created on); only stamp the creation date when none exists yet.
+  // Strip the date prefix with the same `dated` regex (not a fixed offset) for
+  // an exact suffix match — no substring false-positives, no magic length to
+  // drift if the date format changes.
+  // ponytail: O(dir) scan per append — fine at hundreds of threads; cache
+  // thread→filename in memory if conversations/ ever holds thousands.
   const dated = /^\d{4}-\d{2}-\d{2}-/;
-  const existing = fs.readdirSync(dir).find((f) => dated.test(f) && f.slice(11) === suffix);
+  const existing = fs.readdirSync(dir).find((f) => dated.test(f) && f.replace(dated, '') === suffix);
   if (existing) return existing;
   return `${timestamp.toISOString().split('T')[0]}-${suffix}`;
 }
