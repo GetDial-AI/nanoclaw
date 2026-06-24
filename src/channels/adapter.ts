@@ -163,6 +163,7 @@ export interface ChannelAdapter {
    * Returning the same platform_id on repeated calls is expected.
    */
   openDM?(userHandle: string): Promise<string>;
+  resolveChannelName?: (platformId: string) => Promise<string | null>;
 }
 
 /** Factory function that creates a channel adapter (returns null if credentials missing). */
