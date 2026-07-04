@@ -206,6 +206,29 @@ ncl groups restart --id <group-id> --message "on_wake test"
 
 Without `--message`, the container comes back on the next user message. From inside a container, `--id` is auto-filled and only the calling session restarts.
 
+## Runaway task
+
+A scheduled task (cron) that keeps firing is a `messages_in` row with `kind='task'` in a session's `inbound.db`. When an agent won't stop one — or you'd rather not ask the misbehaving agent — use the `ncl tasks` operator surface to inspect and stop it directly from the host:
+
+```bash
+# List every pending/paused task across all groups (one row per series).
+ncl tasks list
+
+# Scope to a single agent group.
+ncl tasks list --group <group-id>
+
+# Inspect one task by id or series id.
+ncl tasks get --id <task-id>
+
+# Stop it. cancel/pause/resume match by id OR series id, so a recurring
+# task's live next occurrence is caught, not just the row you looked up.
+ncl tasks cancel --id <task-id>
+ncl tasks pause  --id <task-id>
+ncl tasks resume --id <task-id>
+```
+
+The host is the legitimate writer of `inbound.db`, so these apply straight to the session DB without waking the container. `cancel` marks the series completed, `pause` holds a pending task, `resume` re-arms a paused one.
+
 ## Manual Container Probes
 
 The container's entry point is `exec bun run /app/src/index.ts`; it talks only to the mounted session DBs, so there is no JSON to pipe in. To probe the image directly:
@@ -258,13 +281,14 @@ docker builder prune -af
 
 ## Clearing a Session
 
-Conversation continuity lives in the container-owned `session_state` table in `outbound.db` (the provider's session/continuation id). The agent's `/clear` clears it. To reset a session from the host, remove the session folder so a fresh one is provisioned on the next message:
+Conversation continuity lives in the container-owned `session_state` table in `outbound.db` (the provider's session/continuation id). The agent's `/clear` clears it. To reset a session from the host, just remove the session folder — it self-heals: the host re-creates the folder and re-initializes both DBs on the next inbound message, so you leave the central `sessions` row in place and don't need to restart the host.
 
 ```bash
 # Inspect first
 ncl sessions get <session-id>
 
-# Remove a single session's folder (host re-provisions both DBs on next message)
+# Remove a single session's folder — the host re-provisions it (both DBs)
+# on the next message. No row deletion or host restart needed.
 rm -rf data/v2-sessions/<group>/<session>/
 ```
 

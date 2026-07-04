@@ -105,6 +105,7 @@ ncl help
 | members | list, add, remove | Unprivileged access gate for an agent group |
 | destinations | list, add, remove | Where an agent group can send messages |
 | sessions | list, get | Active sessions (read-only) |
+| tasks | list, get, cancel, pause, resume | Scheduled tasks (cron jobs) in a group's sessions — operator surface to stop a runaway task |
 | user-dms | list | Cold-DM cache (read-only) |
 | dropped-messages | list | Messages from unregistered senders (read-only) |
 | approvals | list, get | Pending approval requests (read-only) |
