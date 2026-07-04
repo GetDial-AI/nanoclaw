@@ -40,6 +40,15 @@ import { ensureUserDm } from '../permissions/user-dm.js';
 export const REJECT_WITH_REASON_VALUE = 'reject_with_reason';
 
 /**
+ * How long a module approval waits for an admin before the host sweep
+ * finalizes it as a timeout. Without this a card that's never answered (or
+ * whose delivery silently fell on the floor) leaves a `status='pending'` row
+ * that blocks the requesting agent forever. Reuses the `expires_at` column;
+ * the awaiting-reason hold overwrites it with its own short window on transition.
+ */
+export const MODULE_APPROVAL_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
  * Three-button approval UI. Plain Reject is the instant fast path; "Reject with
  * reason…" opts into the reason-capture flow. Shared by every module approval
  * (create_agent, install_packages, add_mcp_server); OneCLI credential cards
@@ -248,6 +257,7 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     action,
     payload: JSON.stringify(payload),
     created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + MODULE_APPROVAL_TIMEOUT_MS).toISOString(),
     title,
     options_json: JSON.stringify(normalizedOptions),
     approver_user_id: approverUserId ?? null,

@@ -33,6 +33,8 @@ export type { ApprovalHandler, ApprovalHandlerContext, RequestApprovalOptions } 
 // Host-sweep hook for ghosted "Reject with reason…" holds. The re-export also
 // loads reason-capture.js, registering its message-interceptor on import.
 export { sweepAwaitingReasonRejects } from './reason-capture.js';
+// Host-sweep hook for module approvals that timed out unanswered.
+export { sweepExpiredModuleApprovals } from './timeout-sweep.js';
 
 registerResponseHandler(handleApprovalsResponse);
 

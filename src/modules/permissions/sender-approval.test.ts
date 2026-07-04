@@ -175,6 +175,22 @@ describe('unknown-sender request_approval flow', () => {
     expect(rows).toHaveLength(1);
   });
 
+  it('drops the pending row when card delivery fails (no permanent block)', async () => {
+    const { routeInbound } = await import('../../router.js');
+    deliverMock.mockRejectedValueOnce(new Error('delivery boom'));
+
+    await routeInbound(stranger('hi there'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Delivery was attempted but threw...
+    expect(deliverMock).toHaveBeenCalledTimes(1);
+    // ...and the row was rolled back so the dedup gate lets a future attempt
+    // through instead of stranding the sender forever behind a lost card.
+    const { getDb } = await import('../../db/connection.js');
+    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_sender_approvals').get() as { c: number }).c;
+    expect(count).toBe(0);
+  });
+
   it('dedups a second message from the same stranger while pending', async () => {
     const { routeInbound } = await import('../../router.js');
     await routeInbound(stranger('hello'));

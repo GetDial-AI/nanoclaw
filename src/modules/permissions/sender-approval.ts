@@ -32,7 +32,11 @@ import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
-import { createPendingSenderApproval, hasInFlightSenderApproval } from './db/pending-sender-approvals.js';
+import {
+  createPendingSenderApproval,
+  deletePendingSenderApproval,
+  hasInFlightSenderApproval,
+} from './db/pending-sender-approvals.js';
 
 const APPROVAL_OPTIONS: RawOption[] = [
   { label: 'Allow', selectedLabel: '✅ Allowed', value: 'approve' },
@@ -109,10 +113,11 @@ export async function requestSenderApproval(input: RequestSenderApprovalInput): 
 
   const adapter = getDeliveryAdapter();
   if (!adapter) {
-    // Without a delivery adapter, the card can't be sent. Log + leave the
-    // row in place so the admin can see it via DB or manual tooling; the
-    // dedup gate will suppress further cards until it's cleared.
-    log.error('Unknown-sender approval row created but no delivery adapter is wired', {
+    // Without a delivery adapter the card can't be sent, so drop the row we
+    // just created. Leaving it would strand the sender forever behind the
+    // dedup gate (matches the header contract: adapter-missing → no row).
+    deletePendingSenderApproval(approvalId);
+    log.error('Unknown-sender approval dropped — no delivery adapter is wired', {
       approvalId,
     });
     return;
@@ -140,6 +145,10 @@ export async function requestSenderApproval(input: RequestSenderApprovalInput): 
       agentGroupId,
     });
   } catch (err) {
+    // Delivery failed — drop the row so the dedup gate doesn't permanently
+    // block this sender behind a card that never arrived (matches the header
+    // contract: delivery failure → no row, a future attempt retries).
+    deletePendingSenderApproval(approvalId);
     log.error('Unknown-sender approval card delivery failed', {
       approvalId,
       err,

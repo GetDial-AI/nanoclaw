@@ -207,6 +207,20 @@ export function getExpiredAwaitingReasonApprovals(nowIso: string): PendingApprov
     .all(nowIso) as PendingApproval[];
 }
 
+/**
+ * Module approvals (session-scoped) that sat unanswered past their expiry —
+ * the timeout sweep's set. Scoped to `session_id IS NOT NULL` so OneCLI
+ * credential rows (session-less, resolved in-memory by the gateway callback)
+ * are never swept here even though they also carry an `expires_at`.
+ */
+export function getExpiredPendingApprovals(nowIso: string): PendingApproval[] {
+  return getDb()
+    .prepare(
+      "SELECT * FROM pending_approvals WHERE status = 'pending' AND session_id IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?",
+    )
+    .all(nowIso) as PendingApproval[];
+}
+
 export function deletePendingApproval(approvalId: string): void {
   getDb().prepare('DELETE FROM pending_approvals WHERE approval_id = ?').run(approvalId);
 }

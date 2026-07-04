@@ -54,7 +54,11 @@ import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 import type { AgentGroup } from '../../types.js';
 import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
-import { createPendingChannelApproval, hasInFlightChannelApproval } from './db/pending-channel-approvals.js';
+import {
+  createPendingChannelApproval,
+  deletePendingChannelApproval,
+  hasInFlightChannelApproval,
+} from './db/pending-channel-approvals.js';
 import { hasAdminPrivilege } from './db/user-roles.js';
 
 // ── Value constants (response handler in index.ts parses these) ──
@@ -218,7 +222,11 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
 
   const adapter = getDeliveryAdapter();
   if (!adapter) {
-    log.error('Channel registration row created but no delivery adapter is wired', { messagingGroupId });
+    // Without a delivery adapter the card can't be sent, so drop the row we
+    // just created. Leaving it would block the channel forever behind the
+    // dedup gate (matches the header contract: adapter-missing → no row).
+    deletePendingChannelApproval(messagingGroupId);
+    log.error('Channel registration dropped — no delivery adapter is wired', { messagingGroupId });
     return;
   }
 
@@ -242,6 +250,10 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
       approver: delivery.userId,
     });
   } catch (err) {
+    // Delivery failed — drop the row so the dedup gate doesn't permanently
+    // block this channel behind a card that never arrived (matches the header
+    // contract: delivery failure → no row, a future attempt retries).
+    deletePendingChannelApproval(messagingGroupId);
     log.error('Channel registration card delivery failed', { messagingGroupId, err });
   }
 }

@@ -164,6 +164,18 @@ async function sweep(): Promise<void> {
   }
   // MODULE-HOOK:approvals-reason-sweep:end
 
+  // Finalize module approvals that timed out unanswered — the pending row
+  // would otherwise strand the requesting agent forever. Central-DB scan, once
+  // per tick.
+  // MODULE-HOOK:approvals-timeout-sweep:start
+  try {
+    const { sweepExpiredModuleApprovals } = await import('./modules/approvals/index.js');
+    await sweepExpiredModuleApprovals();
+  } catch (err) {
+    log.error('Module-approval timeout sweep failed', { err });
+  }
+  // MODULE-HOOK:approvals-timeout-sweep:end
+
   setTimeout(sweep, SWEEP_INTERVAL_MS);
 }
 

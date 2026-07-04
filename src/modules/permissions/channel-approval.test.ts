@@ -176,6 +176,22 @@ describe('unknown-channel registration flow', () => {
     expect(count).toBe(1);
   });
 
+  it('drops the pending row when card delivery fails (no permanent block)', async () => {
+    const { routeInbound } = await import('../../router.js');
+    deliverMock.mockRejectedValueOnce(new Error('delivery boom'));
+
+    await routeInbound(groupMention('chat-fail'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    // Delivery was attempted but threw...
+    expect(deliverMock).toHaveBeenCalledTimes(1);
+    // ...and the row was rolled back so the dedup gate lets a future attempt
+    // through instead of blocking the channel forever behind a lost card.
+    const { getDb } = await import('../../db/connection.js');
+    const count = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number }).c;
+    expect(count).toBe(0);
+  });
+
   it('dedups a second mention while the card is pending', async () => {
     const { routeInbound } = await import('../../router.js');
     await routeInbound(groupMention('chat-busy'));

@@ -277,3 +277,42 @@ describe('plain reject (regression)', () => {
     expect(lastRelayedText()).toBe('Your install_packages request was rejected by admin.');
   });
 });
+
+/** Seed a pending module approval carrying an explicit expiry. */
+function seedApprovalWithExpiry(approvalId: string, expiresAt: string, action = 'create_agent'): void {
+  createPendingApproval({
+    approval_id: approvalId,
+    session_id: 'sess-1',
+    request_id: approvalId,
+    action,
+    payload: JSON.stringify({ name: 'child' }),
+    created_at: now(),
+    expires_at: expiresAt,
+    title: 'Approval',
+    options_json: JSON.stringify([]),
+  });
+}
+
+describe('module-approval timeout sweep', () => {
+  it('finalizes an expired pending approval and notifies the agent', async () => {
+    const { sweepExpiredModuleApprovals } = await import('./timeout-sweep.js');
+    const { wakeContainer } = await import('../../container-runner.js');
+    seedApprovalWithExpiry('appr-timeout', new Date(Date.now() - 1000).toISOString(), 'install_packages');
+
+    await sweepExpiredModuleApprovals();
+
+    expect(getPendingApproval('appr-timeout')).toBeUndefined();
+    expect(lastRelayedText()).toBe('Your install_packages request timed out waiting for admin approval.');
+    expect(vi.mocked(wakeContainer)).toHaveBeenCalled();
+  });
+
+  it('leaves a not-yet-expired pending approval untouched', async () => {
+    const { sweepExpiredModuleApprovals } = await import('./timeout-sweep.js');
+    seedApprovalWithExpiry('appr-fresh', new Date(Date.now() + 60_000).toISOString());
+
+    await sweepExpiredModuleApprovals();
+
+    expect(getPendingApproval('appr-fresh')?.status).toBe('pending');
+    expect(vi.mocked(writeSessionMessage)).not.toHaveBeenCalled();
+  });
+});
