@@ -23,7 +23,7 @@
  */
 import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
-import { createPendingApproval, getSession } from '../../db/sessions.js';
+import { createPendingApproval, deletePendingApproval, getSession } from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { wakeContainer } from '../../container-runner.js';
 import { log } from '../../log.js';
@@ -264,26 +264,36 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
   });
 
   const adapter = getDeliveryAdapter();
-  if (adapter) {
-    try {
-      await adapter.deliver(
-        target.messagingGroup.channel_type,
-        target.messagingGroup.platform_id,
-        null,
-        'chat-sdk',
-        JSON.stringify({
-          type: 'ask_question',
-          questionId: approvalId,
-          title,
-          question,
-          options: APPROVAL_OPTIONS,
-        }),
-      );
-    } catch (err) {
-      log.error('Failed to deliver approval card', { action, approvalId, err });
-      notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
-      return;
-    }
+  if (!adapter) {
+    // No delivery adapter means the card can never be sent, so drop the row we
+    // just created — otherwise it blocks the agent until the expiry sweep, with
+    // a misleading "timed out" instead of the real cause.
+    deletePendingApproval(approvalId);
+    log.error('Failed to deliver approval card — no delivery adapter is wired', { action, approvalId });
+    notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
+    return;
+  }
+  try {
+    await adapter.deliver(
+      target.messagingGroup.channel_type,
+      target.messagingGroup.platform_id,
+      null,
+      'chat-sdk',
+      JSON.stringify({
+        type: 'ask_question',
+        questionId: approvalId,
+        title,
+        question,
+        options: APPROVAL_OPTIONS,
+      }),
+    );
+  } catch (err) {
+    // Delivery failed → drop the orphan row (matching the sender/channel paths)
+    // so the agent hears the real failure now, not a timeout in 7 days.
+    deletePendingApproval(approvalId);
+    log.error('Failed to deliver approval card', { action, approvalId, err });
+    notifyAgent(session, `${action} failed: could not deliver approval request to ${target.userId}.`);
+    return;
   }
 
   log.info('Approval requested', { action, approvalId, agentName, approver: target.userId });
