@@ -208,6 +208,22 @@ lines for SIEM export. Event fields are chosen to project losslessly onto
 OCSF and Elastic ECS; forwarding is a mapping exercise, deferred until a
 forwarder exists.
 
+**Integration surfaces** (no push forwarder ships in core — credentials and
+transport for external systems never live here):
+
+1. **Tail the store** — any external agent (Vector, Filebeat, Fluent Bit, a
+   custom daemon) tails `data/audit/*.ndjson`; the format is stable and
+   `schema_version`-stamped.
+2. **Pull via the CLI** — poll `ncl audit list --format ndjson --since …` and
+   dedupe on `event_id`.
+3. **In-process post-write hooks** — a module (in-tree or skill-installed)
+   calls `registerAuditHook({ name, onEvent, init?, maintain?, shutdown? })`
+   from `src/audit/`. Hooks fire only **after** an event is durably appended
+   to the local day-file, so anything exported is guaranteed to exist in the
+   source of truth; a hook that misses events catches up by reading the
+   day-files (at-least-once). Hook failures are isolated and logged — they
+   never affect the log, other hooks, or the audited action.
+
 ## Resource Limits
 
 Per-container CPU and memory caps are **opt-in and unset by default** — a runaway

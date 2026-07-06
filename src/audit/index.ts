@@ -7,6 +7,7 @@
  */
 export * from './types.js';
 export { redactDetails } from './redact.js';
-export { AUDIT_DIR, pruneAuditLogIfDue } from './store.js';
-export { initAuditLog } from './init.js';
+export { AUDIT_DIR } from './store.js';
+export { initAuditLog, maintainAudit } from './init.js';
+export { type AuditHook, registerAuditHook } from './hooks.js';
 export { runApprovedHandler, withAudit } from './wrappers.js';

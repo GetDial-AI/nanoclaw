@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 
 import { AUDIT_ENABLED } from '../config.js';
 import { log } from '../log.js';
+import { notifyAuditHooks } from './hooks.js';
 import { redactDetails } from './redact.js';
 import { appendAuditLine } from './store.js';
 import type { AuditEvent, AuditEventInput } from './types.js';
@@ -32,7 +33,12 @@ export function emitAuditEvent(input: AuditEventInput | (() => AuditEventInput))
       correlation_id: input.correlationId ?? null,
       details: redactDetails(input.details ?? {}),
     };
-    appendAuditLine(JSON.stringify(event));
+    const line = JSON.stringify(event);
+    appendAuditLine(line);
+    // Post-write hooks: fired only after the append succeeded, so an exporter
+    // can never know an event the source of truth doesn't. Failures are
+    // isolated inside notifyAuditHooks.
+    notifyAuditHooks(event, line);
     // eslint-disable-next-line no-catch-all/no-catch-all -- fail-open is the contract: auditing must never take down the audited action
   } catch (err) {
     // Fail-open + loud: the audited action must proceed even when the log

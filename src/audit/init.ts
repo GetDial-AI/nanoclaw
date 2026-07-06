@@ -3,12 +3,16 @@
  *
  * The decision observer registers unconditionally (its emits no-op when
  * disabled). When enabled: assert data/audit/ is writable (refusing to start
- * beats running with a silent audit gap) and run the boot prune.
+ * beats running with a silent audit gap), run the boot prune, and start the
+ * registered post-write hooks' lifecycle (init here, maintain via the host
+ * sweep, shutdown via the host's graceful-shutdown registry).
  */
 import { AUDIT_ENABLED, AUDIT_RETENTION_DAYS } from '../config.js';
 import { log } from '../log.js';
+import { onShutdown } from '../response-registry.js';
+import { initAuditHooks, maintainAuditHooks, shutdownAuditHooks } from './hooks.js';
 import { registerAuditObserver } from './observer.js';
-import { assertAuditWritable, AUDIT_DIR, markPrunedToday, pruneAuditLog } from './store.js';
+import { assertAuditWritable, AUDIT_DIR, markPrunedToday, pruneAuditLog, pruneAuditLogIfDue } from './store.js';
 
 export function initAuditLog(): void {
   registerAuditObserver();
@@ -23,5 +27,16 @@ export function initAuditLog(): void {
   }
   pruneAuditLog();
   markPrunedToday();
+  initAuditHooks(); // throw → main() exit 1, same posture as the writability assert
+  onShutdown(() => shutdownAuditHooks());
   log.info('Audit log enabled', { dir: AUDIT_DIR, retentionDays: AUDIT_RETENTION_DAYS });
+}
+
+/**
+ * Host-sweep tick: retention prune (throttled to once per UTC day internally)
+ * plus every hook's periodic maintenance. No-op when audit is disabled.
+ */
+export function maintainAudit(): void {
+  pruneAuditLogIfDue();
+  if (AUDIT_ENABLED) maintainAuditHooks();
 }
