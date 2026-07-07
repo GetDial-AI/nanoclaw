@@ -23,7 +23,12 @@
  */
 import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
-import { createPendingApproval, getPendingApprovalByDedupKey, getSession } from '../../db/sessions.js';
+import {
+  createPendingApproval,
+  getPendingApproval,
+  getPendingApprovalByDedupKey,
+  getSession,
+} from '../../db/sessions.js';
 import { getDeliveryAdapter } from '../../delivery.js';
 import { wakeContainer } from '../../container-runner.js';
 import { log } from '../../log.js';
@@ -131,6 +136,51 @@ export async function notifyApprovalResolved(event: ApprovalResolvedEvent): Prom
         approvalId: event.approval.approval_id,
         action: event.approval.action,
         outcome: event.outcome,
+        err,
+      });
+    }
+  }
+}
+
+// ── Approval-requested callbacks ──
+// The creation-side sibling of the resolved observer: fires once whenever a
+// hold record comes into existence, whichever stack created it —
+// requestApproval (cli_command, create_agent, self-mod, a2a, sender
+// admission), the OneCLI credential bridge (its own rows, ids and card), and
+// channel registration (as a synthesized hold view). Together with
+// notifyApprovalResolved this gives observers the full hold lifecycle with
+// zero touch points inside the flows.
+
+export interface ApprovalRequestedEvent {
+  /**
+   * The created hold. For holds that live outside pending_approvals
+   * (channel registration) this is a synthesized view of the same shape.
+   */
+  approval: PendingApproval;
+  /** Requesting agent's session; null for sessionless holds (sender admission, OneCLI, channel registration). */
+  session: Session | null;
+  /** Namespaced user ID (`<channel>:<handle>`) of the approver the card was delivered to. */
+  deliveredTo: string;
+}
+
+export type ApprovalRequestedHandler = (event: ApprovalRequestedEvent) => Promise<void> | void;
+
+const approvalRequestedHandlers: ApprovalRequestedHandler[] = [];
+
+export function registerApprovalRequestedHandler(handler: ApprovalRequestedHandler): void {
+  approvalRequestedHandlers.push(handler);
+}
+
+/** Fire every registered approval-requested callback. Called wherever a hold record is created. */
+export async function notifyApprovalRequested(event: ApprovalRequestedEvent): Promise<void> {
+  for (const handler of approvalRequestedHandlers) {
+    try {
+      await handler(event);
+      // eslint-disable-next-line no-catch-all/no-catch-all -- isolation is the contract: one bad callback must not block the hold or other callbacks
+    } catch (err) {
+      log.error('Approval-requested handler threw', {
+        approvalId: event.approval.approval_id,
+        action: event.approval.action,
         err,
       });
     }
@@ -312,6 +362,11 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     approver_scope: opts.approverScope ?? 'group',
     dedup_key: dedupKey ?? null,
   });
+
+  const created = getPendingApproval(approvalId);
+  if (created) {
+    await notifyApprovalRequested({ approval: created, session: session ?? null, deliveredTo: target.userId });
+  }
 
   const adapter = getDeliveryAdapter();
   if (adapter) {

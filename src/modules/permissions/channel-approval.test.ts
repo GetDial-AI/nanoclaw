@@ -180,6 +180,23 @@ describe('unknown-channel registration flow', () => {
     expect(count).toBe(1);
   });
 
+  it('announces the hold through the shared approval-requested observer', async () => {
+    const { registerApprovalRequestedHandler } = await import('../approvals/primitive.js');
+    const { routeInbound } = await import('../../router.js');
+
+    const events: Array<{ approval: { approval_id: string; action: string }; deliveredTo: string }> = [];
+    registerApprovalRequestedHandler((event) => {
+      if (event.approval.action === 'channel_registration') events.push(event);
+    });
+
+    await routeInbound(groupMention('chat-observed'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(events).toHaveLength(1);
+    expect(events[0].deliveredTo).toBe('telegram:owner');
+    expect(events[0].approval.approval_id).toMatch(/^mg-/); // the hold view is keyed by the messaging group
+  });
+
   it('dedups a second mention while the card is pending', async () => {
     const { routeInbound } = await import('../../router.js');
     await routeInbound(groupMention('chat-busy'));

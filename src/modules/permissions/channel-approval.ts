@@ -53,7 +53,7 @@ import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
 import type { AgentGroup, PendingApproval } from '../../types.js';
-import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
+import { notifyApprovalRequested, pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
 import {
   createPendingChannelApproval,
   hasInFlightChannelApproval,
@@ -212,7 +212,7 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
 
   // agent_group_id is NOT NULL bookkeeping (the schema predates the global
   // approver chain); it no longer drives approver resolution or click-auth.
-  createPendingChannelApproval({
+  const row: PendingChannelApproval = {
     messaging_group_id: messagingGroupId,
     agent_group_id: agentGroups[0].id,
     original_message: JSON.stringify(event),
@@ -220,7 +220,9 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
     created_at: new Date().toISOString(),
     title,
     options_json: JSON.stringify(options),
-  });
+  };
+  createPendingChannelApproval(row);
+  await notifyApprovalRequested({ approval: channelHoldView(row), session: null, deliveredTo: delivery.userId });
 
   const adapter = getDeliveryAdapter();
   if (!adapter) {
