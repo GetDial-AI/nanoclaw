@@ -35,19 +35,19 @@ export interface GuardedActionSpec {
   grantMatches?: (grant: PendingApproval, input: GuardInput) => boolean;
 }
 
-const catalog = new Map<string, GuardedActionSpec>();
+const guardedActions = new Map<string, GuardedActionSpec>();
 
 export function registerGuardedAction(spec: GuardedActionSpec): void {
-  if (catalog.has(spec.action)) {
+  if (guardedActions.has(spec.action)) {
     log.warn('Guarded action re-registered (overwriting)', { action: spec.action });
   }
-  catalog.set(spec.action, spec);
+  guardedActions.set(spec.action, spec);
 }
 
 export function getGuardedAction(action: string): GuardedActionSpec | undefined {
-  return catalog.get(action);
+  return guardedActions.get(action);
 }
 
 export function listGuardedActions(): GuardedActionSpec[] {
-  return [...catalog.values()].sort((a, b) => a.action.localeCompare(b.action));
+  return [...guardedActions.values()].sort((a, b) => a.action.localeCompare(b.action));
 }

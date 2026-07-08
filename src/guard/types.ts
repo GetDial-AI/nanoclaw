@@ -4,7 +4,7 @@
  * The guard is a domain-free leaf: this module may import the DB read layer,
  * config, log, and shared types — never src/cli/* or src/modules/*. Domain
  * knowledge (what an action's structural baseline checks) arrives via
- * registration: catalog entries (catalog.ts) are registered by the domain
+ * registration: catalog entries (guard-actions.ts) are registered by the domain
  * modules at their module edges.
  */
 import type { PendingApproval } from '../types.js';

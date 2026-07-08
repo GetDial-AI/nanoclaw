@@ -20,7 +20,7 @@
  */
 import { getPendingApproval } from '../db/sessions.js';
 import { log } from '../log.js';
-import { getGuardedAction } from './catalog.js';
+import { getGuardedAction } from './guard-actions.js';
 import { ALLOW, DENY, type GuardDecision, type GuardInput } from './types.js';
 
 export function guard(input: GuardInput): GuardDecision {

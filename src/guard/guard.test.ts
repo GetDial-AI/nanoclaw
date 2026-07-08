@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { guard } from './guard.js';
-import { registerGuardedAction } from './catalog.js';
+import { registerGuardedAction } from './guard-actions.js';
 import { ALLOW, DENY, HOLD, type GuardInput } from './types.js';
 
 const mockGetPendingApproval = vi.fn();

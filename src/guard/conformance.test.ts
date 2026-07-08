@@ -27,7 +27,7 @@ import { listCommands } from '../cli/registry.js';
 import { commandGuardAction } from '../cli/guard.js';
 import { listDeliveryActions, registerDeliveryAction } from '../delivery.js';
 import { EXEMPT_DELIVERY_ACTIONS, guardConformanceViolations } from '../guard-conformance.js';
-import { getGuardedAction } from './catalog.js';
+import { getGuardedAction } from './guard-actions.js';
 
 describe('guard conformance', () => {
   it('the full walk (shared with the boot check) reports zero violations', () => {
