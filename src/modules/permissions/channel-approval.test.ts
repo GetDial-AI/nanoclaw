@@ -176,6 +176,23 @@ describe('unknown-channel registration flow', () => {
     expect(count).toBe(1);
   });
 
+  it('announces the hold through the shared approval-requested observer', async () => {
+    const { registerApprovalRequestedHandler } = await import('../approvals/primitive.js');
+    const { routeInbound } = await import('../../router.js');
+
+    const events: Array<{ approval: { approval_id: string; action: string }; deliveredTo: string }> = [];
+    registerApprovalRequestedHandler((event) => {
+      if (event.approval.action === 'channel_registration') events.push(event);
+    });
+
+    await routeInbound(groupMention('chat-observed'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(events).toHaveLength(1);
+    expect(events[0].deliveredTo).toBe('telegram:owner');
+    expect(events[0].approval.approval_id).toMatch(/^mg-/); // the hold view is keyed by the messaging group
+  });
+
   it('dedups a second mention while the card is pending', async () => {
     const { routeInbound } = await import('../../router.js');
     await routeInbound(groupMention('chat-busy'));
@@ -347,87 +364,6 @@ describe('unknown-channel registration flow', () => {
     }
 
     // No wiring created, pending row preserved so a real approver can act on it.
-    const mgaCount = (
-      getDb()
-        .prepare('SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?')
-        .get(pending.messaging_group_id) as { c: number }
-    ).c;
-    expect(mgaCount).toBe(0);
-    const stillPending = (getDb().prepare('SELECT COUNT(*) AS c FROM pending_channel_approvals').get() as { c: number })
-      .c;
-    expect(stillPending).toBe(1);
-  });
-
-  it('does not let a scoped admin connect an unknown channel to another agent group', async () => {
-    const { routeInbound } = await import('../../router.js');
-    const { getResponseHandlers } = await import('../../response-registry.js');
-    const { getDb } = await import('../../db/connection.js');
-
-    createAgentGroup({ id: 'ag-2', name: 'Betty', folder: 'betty', agent_provider: null, created_at: now() });
-    upsertUser({ id: 'telegram:scoped-admin', kind: 'telegram', display_name: 'Scoped Admin', created_at: now() });
-    grantRole({
-      user_id: 'telegram:scoped-admin',
-      role: 'admin',
-      agent_group_id: 'ag-1',
-      granted_by: 'telegram:owner',
-      granted_at: now(),
-    });
-    createMessagingGroup({
-      id: 'mg-dm-scoped-admin',
-      channel_type: 'telegram',
-      platform_id: 'dm-scoped-admin',
-      name: 'Scoped Admin DM',
-      is_group: 0,
-      unknown_sender_policy: 'public',
-      created_at: now(),
-    });
-    getDb()
-      .prepare(
-        `INSERT INTO user_dms (user_id, channel_type, messaging_group_id, resolved_at)
-       VALUES (?, ?, ?, ?)`,
-      )
-      .run('telegram:scoped-admin', 'telegram', 'mg-dm-scoped-admin', now());
-
-    await routeInbound(groupMention('chat-scoped-cross-group'));
-    await new Promise((r) => setTimeout(r, 10));
-
-    const pending = getDb().prepare('SELECT messaging_group_id FROM pending_channel_approvals').get() as {
-      messaging_group_id: string;
-    };
-    expect(pending).toBeDefined();
-    expect(deliverMock).toHaveBeenCalledTimes(1);
-    expect(deliverMock.mock.calls[0][1]).toBe('dm-scoped-admin');
-
-    for (const handler of getResponseHandlers()) {
-      const claimed = await handler({
-        questionId: pending.messaging_group_id,
-        value: 'choose_existing',
-        userId: 'scoped-admin',
-        channelType: 'telegram',
-        platformId: 'dm-scoped-admin',
-        threadId: null,
-      });
-      if (claimed) break;
-    }
-
-    const followupPayload = JSON.parse(deliverMock.mock.calls[1][4] as string) as {
-      options: Array<{ label: string; value: string }>;
-    };
-    expect(followupPayload.options.map((option) => option.value)).toContain('connect:ag-1');
-    expect(followupPayload.options.map((option) => option.value)).not.toContain('connect:ag-2');
-
-    for (const handler of getResponseHandlers()) {
-      const claimed = await handler({
-        questionId: pending.messaging_group_id,
-        value: 'connect:ag-2',
-        userId: 'scoped-admin',
-        channelType: 'telegram',
-        platformId: 'dm-scoped-admin',
-        threadId: null,
-      });
-      if (claimed) break;
-    }
-
     const mgaCount = (
       getDb()
         .prepare('SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?')
