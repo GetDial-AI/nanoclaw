@@ -18,11 +18,11 @@
  * (free-text replies), so a privilege revoked mid-flow is re-checked at each
  * step.
  */
-import { ALLOW, DENY, HOLD, registerGuardedAction } from '../../guard/index.js';
+import { ALLOW, DENY, HOLD, defineGuardedAction } from '../../guard/index.js';
 import { getPendingChannelApproval } from './db/pending-channel-approvals.js';
 import { hasAdminPrivilege } from './db/user-roles.js';
 
-registerGuardedAction({
+export const sendersAdmit = defineGuardedAction({
   action: 'senders.admit',
   baseline: (input) => {
     const policy = input.payload.policy;
@@ -36,7 +36,7 @@ registerGuardedAction({
   },
 });
 
-registerGuardedAction({
+export const channelsRegister = defineGuardedAction({
   action: 'channels.register',
   baseline: (input) => {
     if (input.actor.kind !== 'human') return DENY('channel registration resolves via human clicks/replies');

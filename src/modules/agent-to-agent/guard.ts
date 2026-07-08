@@ -19,7 +19,7 @@
  */
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
-import { ALLOW, DENY, HOLD, registerGuardedAction } from '../../guard/index.js';
+import { ALLOW, DENY, HOLD, defineGuardedAction } from '../../guard/index.js';
 import { hasDestination } from './db/agent-destinations.js';
 import { getMessagePolicy } from './db/agent-message-policies.js';
 
@@ -30,7 +30,7 @@ import { getMessagePolicy } from './db/agent-message-policies.js';
  */
 export const A2A_MESSAGE_GATE_ACTION = 'a2a_message_gate';
 
-registerGuardedAction({
+export const agentsCreate = defineGuardedAction({
   action: 'agents.create',
   approvalAction: 'create_agent',
   // Bind a create_agent grant to the name that was approved.
@@ -56,7 +56,7 @@ registerGuardedAction({
   },
 });
 
-registerGuardedAction({
+export const a2aSend = defineGuardedAction({
   action: 'a2a.send',
   approvalAction: A2A_MESSAGE_GATE_ACTION,
   // Bind an a2a grant to the exact held message target.

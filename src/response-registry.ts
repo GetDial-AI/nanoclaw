@@ -16,9 +16,11 @@
  * the click and the handler, and the wrapped path is the only path. `claims`
  * is the handler's own claim test (does this questionId belong to me?) so an
  * unauthorized click is claimed-and-dropped without stealing other handlers'
- * responses.
+ * responses. The guard argument is not optional — a handler that runs
+ * unguarded must declare so with `unguarded(<reason>)`, at the registration
+ * site, in the diff that adds it.
  */
-import { guard, type GuardActor } from './guard/index.js';
+import { guard, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
 import { log } from './log.js';
 
 export interface ResponsePayload {
@@ -33,8 +35,8 @@ export interface ResponsePayload {
 export type ResponseHandler = (payload: ResponsePayload) => Promise<boolean>;
 
 export interface ResponseGuardSpec {
-  /** Dotted guard-catalog action consulted before the handler runs. */
-  action: string;
+  /** Guard action consulted before the handler runs — the defined value, not a name. */
+  action: GuardedAction;
   /** Would this handler claim the response? (Its own row lookup.) */
   claims: (payload: ResponsePayload) => boolean;
 }
@@ -47,22 +49,23 @@ function responseActor(payload: ResponsePayload): GuardActor {
   return { kind: 'human', userId };
 }
 
-export function registerResponseHandler(handler: ResponseHandler, guardSpec?: ResponseGuardSpec): void {
-  if (!guardSpec) {
+export function registerResponseHandler(handler: ResponseHandler, guardDecl: ResponseGuardSpec | Unguarded): void {
+  if ('reason' in guardDecl) {
+    // Explicitly declared unguarded — the carried reason is the reviewable record.
     responseHandlers.push(handler);
     return;
   }
+  const spec = guardDecl;
   responseHandlers.push(async (payload) => {
-    if (!guardSpec.claims(payload)) return false;
-    const decision = guard({
-      action: guardSpec.action,
+    if (!spec.claims(payload)) return false;
+    const decision = guard(spec.action, {
       actor: responseActor(payload),
       payload: { questionId: payload.questionId, value: payload.value },
     });
     if (decision.effect !== 'allow') {
       // Claim the response so it's not unclaimed-logged, but do nothing.
       log.warn('Response click rejected by guard', {
-        action: guardSpec.action,
+        action: spec.action.action,
         questionId: payload.questionId,
         userId: payload.userId,
         reason: decision.reason,

@@ -1,19 +1,23 @@
 /**
  * The action catalog — the enforcement boundary.
  *
- * An action either is in the catalog (and passes a decision) or is not (and
- * needs none — reads, scheduling self-actions). Declaration is registration:
- * entries are derived at the registries' registration sites (command
- * registry, delivery actions, response handlers, interceptors, module
- * edges), never maintained in a second file. The conformance test walks the
- * registries against this catalog so an unmapped privileged action fails CI.
+ * An action either is defined here (and every consult passes its decision)
+ * or cannot be consulted at all: guard() takes the GuardedAction VALUE
+ * returned by defineGuardedAction, so the wiring between a consult site and
+ * its baseline is a symbol reference the compiler checks. A dropped
+ * module-edge import or a typo'd action name is a build error, not a
+ * runtime fail-open — there is no lookup that can miss.
+ *
+ * Definitions are still recorded by name so boot can enumerate them: the
+ * grant-continuation check (src/guard-conformance.ts) pairs every holding
+ * action with its registered approval handler, and duplicate names are
+ * refused at definition time (grants match on the name).
  */
-import { log } from '../log.js';
 import type { GuardDecision, GuardInput } from './types.js';
 import type { PendingApproval } from '../types.js';
 
 export interface GuardedActionSpec {
-  /** Dotted action name — the catalog key. */
+  /** Dotted action name, e.g. 'roles.grant', 'agents.create', 'a2a.send'. */
   action: string;
   /**
    * Today's structural checks for this action, verbatim — the only source of
@@ -35,19 +39,35 @@ export interface GuardedActionSpec {
   grantMatches?: (grant: PendingApproval, input: GuardInput) => boolean;
 }
 
-const guardedActions = new Map<string, GuardedActionSpec>();
+declare const guardedActionBrand: unique symbol;
+/**
+ * A defined guarded action — only defineGuardedAction can mint one. The
+ * brand makes the type nominal: a hand-rolled { action, baseline } object
+ * does not typecheck at a consult site, and fails the runtime check too.
+ */
+export type GuardedAction = Readonly<GuardedActionSpec> & { readonly [guardedActionBrand]: true };
 
-export function registerGuardedAction(spec: GuardedActionSpec): void {
-  if (guardedActions.has(spec.action)) {
-    log.warn('Guarded action re-registered (overwriting)', { action: spec.action });
+const defined = new Map<string, GuardedAction>();
+const minted = new WeakSet<object>();
+
+export function defineGuardedAction(spec: GuardedActionSpec): GuardedAction {
+  if (defined.has(spec.action)) {
+    throw new Error(`guarded action "${spec.action}" is already defined — action names are the catalog key`);
   }
-  guardedActions.set(spec.action, spec);
+  const def = Object.freeze({ ...spec }) as GuardedAction;
+  minted.add(def);
+  defined.set(spec.action, def);
+  return def;
 }
 
-export function getGuardedAction(action: string): GuardedActionSpec | undefined {
-  return guardedActions.get(action);
+/**
+ * Runtime backstop for callers outside the type system (plain JS, casts):
+ * only values minted by defineGuardedAction pass — guard() denies the rest.
+ */
+export function isGuardedAction(value: unknown): value is GuardedAction {
+  return typeof value === 'object' && value !== null && minted.has(value);
 }
 
-export function listGuardedActions(): GuardedActionSpec[] {
-  return [...guardedActions.values()].sort((a, b) => a.action.localeCompare(b.action));
+export function listGuardedActions(): GuardedAction[] {
+  return [...defined.values()].sort((a, b) => a.action.localeCompare(b.action));
 }

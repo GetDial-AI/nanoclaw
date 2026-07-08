@@ -4,8 +4,9 @@
  * The guard is a domain-free leaf: this module may import the DB read layer,
  * config, log, and shared types — never src/cli/* or src/modules/*. Domain
  * knowledge (what an action's structural baseline checks) arrives via
- * registration: catalog entries (guard-actions.ts) are registered by the domain
- * modules at their module edges.
+ * definition: domain modules call defineGuardedAction (guard-actions.ts) at
+ * their module edges and pass the returned value to every consult and
+ * registration site — the wiring is a symbol reference the compiler checks.
  */
 import type { PendingApproval } from '../types.js';
 
@@ -17,8 +18,6 @@ export type GuardActor =
   | { kind: 'system' };
 
 export interface GuardInput {
-  /** Dotted catalog action name, e.g. 'roles.grant', 'agents.create', 'a2a.send'. */
-  action: string;
   actor: GuardActor;
   /** Domain resource reference, e.g. { from, to } for a2a.send. */
   resource?: Record<string, string>;
@@ -30,6 +29,20 @@ export interface GuardInput {
    * structural baseline is re-checked live on every replay.
    */
   grant?: PendingApproval | null;
+}
+
+declare const unguardedBrand: unique symbol;
+/**
+ * A registration that deliberately carries no guard. Omission is not
+ * representable — every registry requires either a guard spec or this
+ * marker, so the decision to run unguarded is visible, and justified, in
+ * the diff that registers the handler. The reason travels with the
+ * registration; `grep "unguarded("` is the complete inventory.
+ */
+export type Unguarded = { readonly reason: string; readonly [unguardedBrand]: true };
+
+export function unguarded(reason: string): Unguarded {
+  return Object.freeze({ reason }) as Unguarded;
 }
 
 export type GuardDecision =

@@ -8,7 +8,7 @@
  * add-package` etc. — are separate catalog actions derived from the command
  * registry.)
  */
-import { DENY, HOLD, registerGuardedAction, type GuardInput } from '../../guard/index.js';
+import { DENY, HOLD, defineGuardedAction, type GuardInput } from '../../guard/index.js';
 
 function selfModBaseline(label: string) {
   return (input: GuardInput) => {
@@ -19,13 +19,13 @@ function selfModBaseline(label: string) {
   };
 }
 
-registerGuardedAction({
+export const selfModInstallPackages = defineGuardedAction({
   action: 'self_mod.install_packages',
   approvalAction: 'install_packages',
   baseline: selfModBaseline('install_packages'),
 });
 
-registerGuardedAction({
+export const selfModAddMcpServer = defineGuardedAction({
   action: 'self_mod.add_mcp_server',
   approvalAction: 'add_mcp_server',
   baseline: selfModBaseline('add_mcp_server'),

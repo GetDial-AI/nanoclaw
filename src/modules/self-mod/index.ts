@@ -24,10 +24,10 @@
  * system messages with these actions, but delivery logs "Unknown system
  * action" and drops them. Admin never sees a card; nothing changes.
  */
-import './guard.js';
 import { reenterGuardedDeliveryAction, registerDeliveryAction } from '../../delivery.js';
 import { notifyAgent, registerApprovalHandler } from '../approvals/index.js';
 import { applyAddMcpServer, applyInstallPackages } from './apply.js';
+import { selfModAddMcpServer, selfModInstallPackages } from './guard.js';
 import {
   requestAddMcpServerHold,
   requestInstallPackagesHold,
@@ -36,13 +36,13 @@ import {
 } from './request.js';
 
 registerDeliveryAction('install_packages', applyInstallPackages, {
-  guardAction: 'self_mod.install_packages',
+  guardAction: selfModInstallPackages,
   precheck: validateInstallPackages,
   requestHold: requestInstallPackagesHold,
   onDeny: (_content, session, reason) => notifyAgent(session, `install_packages denied: ${reason}`),
 });
 registerDeliveryAction('add_mcp_server', applyAddMcpServer, {
-  guardAction: 'self_mod.add_mcp_server',
+  guardAction: selfModAddMcpServer,
   precheck: validateAddMcpServer,
   requestHold: requestAddMcpServerHold,
   onDeny: (_content, session, reason) => notifyAgent(session, `add_mcp_server denied: ${reason}`),

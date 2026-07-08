@@ -1,85 +1,49 @@
 /**
- * Guard conformance — the non-bypass invariant, shared by CI and boot.
+ * Boot-time guard sanity — the one cross-registry invariant left to check
+ * after all import-time registrations have run.
  *
- * CI only protects code that goes through the repo's CI, but NanoClaw's
- * extension model is skill-installed code: /add-* skills copy modules into
- * the user's tree and register handlers on machines where the test suite
- * never runs. Running the same walk at boot turns the conformance test's
- * guarantee into a runtime invariant at exactly that trust boundary: every
- * registration is an import-time side effect, so by the time main() runs
- * the registries are complete and an unmapped privileged entry is
- * detectable before the host accepts a single message.
+ * The old registry walk is gone: everything it detected is now
+ * unconstructible at the API level.
+ *   - A consult site cannot name a missing catalog entry — guard() takes the
+ *     GuardedAction VALUE returned by defineGuardedAction, so a dropped
+ *     module-edge import or a typo'd action is a compile error (and a forged
+ *     value is denied at runtime), not a silent allow.
+ *   - A handler cannot register unguarded by omission — every registry
+ *     (delivery actions, response handlers, interceptors, CLI commands)
+ *     requires a guard spec or an explicit unguarded(<reason>) declaration
+ *     at the registration site.
  *
- * Fail-closed: the host refuses to start (the upgrade-tripwire posture).
- * A conformance failure is code mis-composition — fixable with the host
- * down — and it surfaces at skill-install time, when the installing agent
- * is watching, instead of running unguarded until someone runs pnpm test.
- *
- * Limit: the walk verifies DECLARED mappings ("every delivery action is
- * guarded or explicitly exempt") — it cannot infer which actions are
- * privileged. That declaration stays on the author; the exemption list
- * below is the loud, reviewable escape hatch.
+ * What remains is completeness ACROSS registries: a guarded action that
+ * holds via `approvalAction` needs a registered approval handler, or an
+ * approved card resolves into nothing — the hold has no continuation. That
+ * pairing only exists once every module has loaded (catalog entries and
+ * approval handlers register from different modules), so it stays a boot
+ * check with the fail-closed posture: the host refuses to start, surfacing
+ * the mis-composition at skill-install time instead of at the first
+ * approved card.
  */
-import { commandGuardAction } from './cli/guard.js';
-import { listCommands } from './cli/registry.js';
-import { listDeliveryActions } from './delivery.js';
-import { getGuardedAction } from './guard/index.js';
+import { listGuardedActions } from './guard/index.js';
 import { log } from './log.js';
+import { getApprovalHandler } from './modules/approvals/primitive.js';
 
-/**
- * Delivery actions that deliberately carry no guard mapping (the declared
- * exemption class, per the guarded-actions design decision 1):
- *   - scheduling self-actions — an agent mutating only its own task rows;
- *     not a privileged action class (yet).
- *   - cli_request — the transport bridge into dispatch(); every inner
- *     command is guarded at dispatch, so the envelope carries no privilege.
- */
-export const EXEMPT_DELIVERY_ACTIONS = new Set([
-  'schedule_task',
-  'cancel_task',
-  'pause_task',
-  'resume_task',
-  'update_task',
-  'cli_request',
-]);
-
-/** Walk the live registries against the guard catalog. Empty = conformant. */
-export function guardConformanceViolations(): string[] {
-  const violations: string[] = [];
-
-  for (const cmd of listCommands()) {
-    const entry = getGuardedAction(commandGuardAction(cmd));
-    if (!entry) {
-      violations.push(`command "${cmd.name}" has no guard-catalog entry`);
-      continue;
-    }
-    if (cmd.access === 'approval' && entry.approvalAction !== 'cli_command') {
-      violations.push(`mutating command "${cmd.name}" maps to a catalog entry that cannot hold`);
-    }
-  }
-
-  for (const { action, guardAction } of listDeliveryActions()) {
-    if (guardAction === null) {
-      if (!EXEMPT_DELIVERY_ACTIONS.has(action)) {
-        violations.push(`delivery action "${action}" is neither guard-mapped nor on the declared exemption list`);
-      }
-      continue;
-    }
-    if (!getGuardedAction(guardAction)) {
-      violations.push(`delivery action "${action}" maps to unregistered guard action "${guardAction}"`);
-    }
-  }
-
-  return violations;
+/** Holding actions with no approve continuation. Empty = conformant. */
+export function grantContinuationGaps(): string[] {
+  return listGuardedActions()
+    .filter((spec) => spec.approvalAction && !getApprovalHandler(spec.approvalAction))
+    .map(
+      (spec) =>
+        `guarded action "${spec.action}" holds via approval action "${spec.approvalAction}" ` +
+        'but no approval handler is registered — an approved hold would have no continuation',
+    );
 }
 
 /**
- * Boot check: refuse to start when any privileged registration is unmapped.
+ * Boot check: refuse to start when a holding action has no continuation.
  * Call after all import-time registrations (any point in main()).
  */
 export function enforceGuardConformance(): void {
-  const violations = guardConformanceViolations();
-  if (violations.length === 0) return;
+  const gaps = grantContinuationGaps();
+  if (gaps.length === 0) return;
 
   console.error(
     [
@@ -87,20 +51,20 @@ export function enforceGuardConformance(): void {
       '='.repeat(64),
       'NanoClaw stopped: guard conformance failure',
       '='.repeat(64),
-      'A privileged registration is not mapped to the guard catalog —',
-      'it would run with no allow/hold/deny decision. This usually means',
-      'a skill (or local change) registered a command or delivery action',
-      'without a guard spec.',
+      'A guarded action can hold for approval, but no approval handler is',
+      'registered for its approval action — an admin could click Approve',
+      'and nothing would execute. This usually means a module (or skill)',
+      'defined a holding baseline without registering its continuation.',
       '',
-      ...violations.map((v) => `  - ${v}`),
+      ...gaps.map((g) => `  - ${g}`),
       '',
-      'Fix the registration (pass a guard spec / derive a catalog entry),',
-      'or — only for genuinely unprivileged self-actions — add it to',
-      'EXEMPT_DELIVERY_ACTIONS in src/guard-conformance.ts.',
+      'Register the approval handler (registerApprovalHandler) in the same',
+      'module that defines the guarded action, or drop approvalAction from',
+      'the definition if the action can never hold.',
       '='.repeat(64),
       '',
     ].join('\n'),
   );
-  log.error('Guard conformance failure — refusing to start', { violations });
+  log.error('Guard conformance failure — refusing to start', { gaps });
   process.exit(1);
 }

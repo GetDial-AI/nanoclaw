@@ -8,7 +8,7 @@
  * registers the help commands, so the registry is populated before the host's
  * CLI server accepts connections.
  */
-import { registerGuardedAction } from '../guard/index.js';
+import { defineGuardedAction, type GuardedAction } from '../guard/index.js';
 import { commandGuardSpec } from './guard.js';
 import type { CallerContext } from './frame.js';
 
@@ -61,6 +61,7 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
 };
 
 const registry = new Map<string, CommandDef>();
+const commandGuards = new Map<string, GuardedAction>();
 
 export function register<TArgs, TData>(def: CommandDef<TArgs, TData>): void {
   if (registry.has(def.name)) {
@@ -68,9 +69,18 @@ export function register<TArgs, TData>(def: CommandDef<TArgs, TData>): void {
   }
   registry.set(def.name, def as CommandDef);
   // Declaration is registration: every command gets a guard-catalog entry
-  // derived from its own definition — dispatch consults the guard, and the
-  // conformance test walks the registry against the catalog.
-  registerGuardedAction(commandGuardSpec(def as CommandDef));
+  // derived from its own definition, in the same call that registers it — a
+  // command cannot exist without a guard, and dispatch consults it by value.
+  commandGuards.set(def.name, defineGuardedAction(commandGuardSpec(def as CommandDef)));
+}
+
+/** The guard defined for a registered command — total for anything register() accepted. */
+export function commandGuard(name: string): GuardedAction {
+  const g = commandGuards.get(name);
+  if (!g) {
+    throw new Error(`CLI command "${name}" has no guard — was it registered through register()?`);
+  }
+  return g;
 }
 
 export function lookup(name: string): CommandDef | undefined {

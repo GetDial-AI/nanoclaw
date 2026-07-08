@@ -32,7 +32,7 @@ import { log } from '../../log.js';
 import { openInboundDb, resolveSession, sessionDir, writeSessionMessage } from '../../session-manager.js';
 import type { PendingApproval, Session } from '../../types.js';
 import { requestApproval } from '../approvals/index.js';
-import { A2A_MESSAGE_GATE_ACTION } from './guard.js';
+import { A2A_MESSAGE_GATE_ACTION, a2aSend } from './guard.js';
 
 export { isSafeAttachmentName };
 export { A2A_MESSAGE_GATE_ACTION } from './guard.js';
@@ -247,8 +247,7 @@ export async function routeAgentMessage(
   // allow, agent_message_policies hold. An approved replay carries the
   // grant — the hold is satisfied but the structure is re-checked live, so
   // revoking a destination between hold and approve blocks delivery.
-  const decision = guard({
-    action: 'a2a.send',
+  const decision = guard(a2aSend, {
     actor: { kind: 'agent', agentGroupId: sourceAgentGroupId, sessionId: session.id },
     resource: { from: sourceAgentGroupId, to: targetAgentGroupId },
     payload: { id: msg.id, platform_id: targetAgentGroupId, content: msg.content, in_reply_to: msg.in_reply_to },

@@ -20,9 +20,8 @@ import { registerApprovalHandler, requestApproval } from '../modules/approvals/i
 import type { PendingApproval } from '../types.js';
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
 import { getResource } from './crud.js';
-import { commandGuardAction } from './guard.js';
 import { listVerbs, renderVerbHelp } from './help-render.js';
-import { listCommands, lookup } from './registry.js';
+import { commandGuard, listCommands, lookup } from './registry.js';
 
 type DispatchOptions = {
   /** Verified approval row when a command is replayed after approval. */
@@ -101,8 +100,7 @@ export async function dispatch(
     }
   }
 
-  const decision = guard({
-    action: commandGuardAction(cmd),
+  const decision = guard(commandGuard(cmd.name), {
     actor: actorFor(ctx),
     payload: req.args,
     grant: opts.grant ?? null,

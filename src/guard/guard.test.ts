@@ -1,16 +1,16 @@
 /**
  * Guard decision-function unit tests: the baseline is the decision (allow /
- * hold / deny returned as-is, non-catalog actions allow), grant semantics
- * (satisfies holds, never denies; invalid → refuse), and the fail-closed
- * posture on a throwing baseline.
+ * hold / deny returned as-is), grant semantics (satisfies holds, never
+ * denies; invalid → refuse), the runtime backstop against forged action
+ * values, and the fail-closed posture on a throwing baseline.
  *
- * Uses synthetic catalog actions registered per test — the registry is
- * per-worker module state with no reset, so action names are unique.
+ * Uses synthetic actions defined per test — the catalog is per-worker module
+ * state with no reset, so action names are unique.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { guard } from './guard.js';
-import { registerGuardedAction } from './guard-actions.js';
+import { defineGuardedAction, type GuardedAction } from './guard-actions.js';
 import { ALLOW, DENY, HOLD, type GuardInput } from './types.js';
 
 const mockGetPendingApproval = vi.fn();
@@ -23,8 +23,8 @@ vi.mock('../log.js', () => ({
 
 const AGENT = { kind: 'agent', agentGroupId: 'ag-1', sessionId: 'sess-1' } as const;
 
-function input(action: string, extra: Partial<GuardInput> = {}): GuardInput {
-  return { action, actor: AGENT, payload: {}, ...extra };
+function input(extra: Partial<GuardInput> = {}): GuardInput {
+  return { actor: AGENT, payload: {}, ...extra };
 }
 
 beforeEach(() => {
@@ -36,18 +36,14 @@ afterEach(() => {
 });
 
 describe('the baseline is the decision', () => {
-  it('non-catalog action → allow', () => {
-    expect(guard(input('test.unregistered-read')).effect).toBe('allow');
-  });
-
   it('baseline allow → allow', () => {
-    registerGuardedAction({ action: 't.allow1', baseline: () => ALLOW('ok') });
-    expect(guard(input('t.allow1')).effect).toBe('allow');
+    const action = defineGuardedAction({ action: 't.allow1', baseline: () => ALLOW('ok') });
+    expect(guard(action, input()).effect).toBe('allow');
   });
 
   it('baseline hold → hold, default approver chain', () => {
-    registerGuardedAction({ action: 't.hold1', baseline: () => HOLD('needs approval') });
-    const d = guard(input('t.hold1'));
+    const action = defineGuardedAction({ action: 't.hold1', baseline: () => HOLD('needs approval') });
+    const d = guard(action, input());
     expect(d.effect).toBe('hold');
     if (d.effect === 'hold') {
       expect(d.reason).toBe('needs approval');
@@ -56,17 +52,24 @@ describe('the baseline is the decision', () => {
   });
 
   it('baseline hold → hold, carrying a named approver', () => {
-    registerGuardedAction({ action: 't.hold2', baseline: () => HOLD('policy row', 'telegram:dana') });
-    const d = guard(input('t.hold2'));
+    const action = defineGuardedAction({ action: 't.hold2', baseline: () => HOLD('policy row', 'telegram:dana') });
+    const d = guard(action, input());
     expect(d.effect).toBe('hold');
     if (d.effect === 'hold') expect(d.approverUserId).toBe('telegram:dana');
   });
 
   it('baseline deny → deny, carrying the reason', () => {
-    registerGuardedAction({ action: 't.deny1', baseline: () => DENY('structurally unauthorized') });
-    const d = guard(input('t.deny1'));
+    const action = defineGuardedAction({ action: 't.deny1', baseline: () => DENY('structurally unauthorized') });
+    const d = guard(action, input());
     expect(d.effect).toBe('deny');
     if (d.effect === 'deny') expect(d.reason).toBe('structurally unauthorized');
+  });
+
+  it('a forged action value (not from defineGuardedAction) is denied', () => {
+    const forged = { action: 't.forged', baseline: () => ALLOW('never vetted') } as unknown as GuardedAction;
+    const d = guard(forged, input());
+    expect(d.effect).toBe('deny');
+    if (d.effect === 'deny') expect(d.reason).toContain('undefined action');
   });
 });
 
@@ -75,49 +78,53 @@ describe('grants', () => {
     ({ approval_id: 'appr-1', action, payload: '{}' }) as unknown as NonNullable<GuardInput['grant']>;
 
   it('a valid live grant satisfies a hold', () => {
-    registerGuardedAction({
+    const action = defineGuardedAction({
       action: 't.g1',
       approvalAction: 'g1_approved',
       baseline: () => HOLD('b'),
     });
     const grant = grantRow('g1_approved');
     mockGetPendingApproval.mockReturnValue(grant);
-    expect(guard(input('t.g1', { grant })).effect).toBe('allow');
+    expect(guard(action, input({ grant })).effect).toBe('allow');
   });
 
   it('a grant never satisfies a deny — the baseline is re-checked live', () => {
-    registerGuardedAction({ action: 't.g2', approvalAction: 'g2_approved', baseline: () => DENY('revoked since') });
+    const action = defineGuardedAction({
+      action: 't.g2',
+      approvalAction: 'g2_approved',
+      baseline: () => DENY('revoked since'),
+    });
     const grant = grantRow('g2_approved');
     mockGetPendingApproval.mockReturnValue(grant);
-    const d = guard(input('t.g2', { grant }));
+    const d = guard(action, input({ grant }));
     expect(d.effect).toBe('deny');
     if (d.effect === 'deny') expect(d.reason).toBe('revoked since');
   });
 
   it('a dead grant (row deleted) refuses instead of re-holding', () => {
-    registerGuardedAction({
+    const action = defineGuardedAction({
       action: 't.g3',
       approvalAction: 'g3_approved',
       baseline: () => HOLD('b'),
     });
     mockGetPendingApproval.mockReturnValue(undefined);
-    const d = guard(input('t.g3', { grant: grantRow('g3_approved') }));
+    const d = guard(action, input({ grant: grantRow('g3_approved') }));
     expect(d.effect).toBe('deny');
   });
 
   it("a grant for a different action doesn't transfer", () => {
-    registerGuardedAction({
+    const action = defineGuardedAction({
       action: 't.g4',
       approvalAction: 'g4_approved',
       baseline: () => HOLD('b'),
     });
     const grant = grantRow('other_action');
     mockGetPendingApproval.mockReturnValue(grant);
-    expect(guard(input('t.g4', { grant })).effect).toBe('deny');
+    expect(guard(action, input({ grant })).effect).toBe('deny');
   });
 
   it('a domain grantMatches binding can refuse a payload mismatch', () => {
-    registerGuardedAction({
+    const action = defineGuardedAction({
       action: 't.g5',
       approvalAction: 'g5_approved',
       grantMatches: () => false,
@@ -125,25 +132,29 @@ describe('grants', () => {
     });
     const grant = grantRow('g5_approved');
     mockGetPendingApproval.mockReturnValue(grant);
-    expect(guard(input('t.g5', { grant })).effect).toBe('deny');
+    expect(guard(action, input({ grant })).effect).toBe('deny');
   });
 
   it('a grant on an already-allowed action is a no-op', () => {
-    registerGuardedAction({ action: 't.g6', approvalAction: 'g6_approved', baseline: () => ALLOW('ok') });
+    const action = defineGuardedAction({
+      action: 't.g6',
+      approvalAction: 'g6_approved',
+      baseline: () => ALLOW('ok'),
+    });
     const grant = grantRow('g6_approved');
     mockGetPendingApproval.mockReturnValue(grant);
-    expect(guard(input('t.g6', { grant })).effect).toBe('allow');
+    expect(guard(action, input({ grant })).effect).toBe('allow');
   });
 });
 
 describe('fail-closed posture', () => {
   it('a throwing baseline denies', () => {
-    registerGuardedAction({
+    const action = defineGuardedAction({
       action: 't.f1',
       baseline: () => {
         throw new Error('boom');
       },
     });
-    expect(guard(input('t.f1')).effect).toBe('deny');
+    expect(guard(action, input()).effect).toBe('deny');
   });
 });

@@ -1,20 +1,15 @@
 /**
- * Guard conformance — the non-bypass invariant, checked structurally.
+ * Guard conformance — the boot invariant, checked with the real registries.
  *
- * Walks the real command registry and the real delivery-action registry
- * (loaded via their production barrels) against the guard catalog. The walk
- * itself lives in src/guard-conformance.ts and runs twice: here in CI, and
- * at every boot (enforceGuardConformance in index.ts refuses to start on a
- * violation) — CI can't see skill-installed registrations, the boot check
- * can. A new privileged command or delivery action cannot quietly ship
- * ungated: registration derives the catalog entry, and this walk makes
- * drift loud.
- *
- * The declared exemption classes live with the walk
- * (EXEMPT_DELIVERY_ACTIONS): scheduling self-actions and the cli_request
- * transport bridge (its inner commands are guarded at dispatch). Reads
- * (list/get/help) are catalog-mapped via registration too, but their
- * baselines allow; the mutating set is what MUST be mapped.
+ * The old registry walk is gone: an unmapped consult or an undeclared
+ * unguarded registration is now unconstructible — guard() takes the defined
+ * GuardedAction value (a dropped module-edge import or typo'd name is a
+ * compile error), and every registry requires a guard spec or an explicit
+ * unguarded(<reason>) declaration. What's left to verify structurally is the
+ * cross-registry pairing the compiler can't see: every holding action has a
+ * registered approve continuation. The check runs here in CI and at every
+ * boot (enforceGuardConformance refuses to start) — CI can't see
+ * skill-installed registrations, the boot check can.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -22,68 +17,68 @@ import { describe, expect, it } from 'vitest';
 import '../cli/commands/index.js';
 import '../modules/index.js';
 import '../cli/delivery-action.js';
+import '../cli/dispatch.js'; // registers the cli_command approval handler
 
-import { listCommands } from '../cli/registry.js';
-import { commandGuardAction } from '../cli/guard.js';
-import { listDeliveryActions, registerDeliveryAction } from '../delivery.js';
-import { EXEMPT_DELIVERY_ACTIONS, guardConformanceViolations } from '../guard-conformance.js';
-import { getGuardedAction } from './guard-actions.js';
+import { commandGuard, listCommands } from '../cli/registry.js';
+import { grantContinuationGaps } from '../guard-conformance.js';
+import { getApprovalHandler } from '../modules/approvals/primitive.js';
+import { defineGuardedAction, listGuardedActions } from './guard-actions.js';
+import { HOLD } from './types.js';
 
 describe('guard conformance', () => {
-  it('the full walk (shared with the boot check) reports zero violations', () => {
-    expect(guardConformanceViolations()).toEqual([]);
+  it('the grant-continuation check (shared with the boot check) reports zero gaps', () => {
+    expect(grantContinuationGaps()).toEqual([]);
   });
 
-  it('every mutating ncl command maps to a guard catalog entry that can hold', () => {
+  it('every holding action pairs with a registered approval handler', () => {
+    const holding = listGuardedActions().filter((spec) => spec.approvalAction);
+    expect(holding.length).toBeGreaterThan(0);
+
+    const dangling = holding.filter((spec) => !getApprovalHandler(spec.approvalAction as string));
+    expect(dangling.map((s) => s.action)).toEqual([]);
+  });
+
+  it('every mutating ncl command derives a guard that holds via cli_command', () => {
     const mutating = listCommands().filter((cmd) => cmd.access === 'approval');
     expect(mutating.length).toBeGreaterThan(0);
 
-    const unmapped = mutating.filter((cmd) => {
-      const entry = getGuardedAction(commandGuardAction(cmd));
-      return !entry || entry.approvalAction !== 'cli_command';
-    });
-    expect(unmapped.map((c) => c.name)).toEqual([]);
+    const wrong = mutating.filter((cmd) => commandGuard(cmd.name).approvalAction !== 'cli_command');
+    expect(wrong.map((c) => c.name)).toEqual([]);
   });
 
-  it('every registered command (reads included) has a catalog entry — denied reads still surface as denials', () => {
-    const unmapped = listCommands().filter((cmd) => !getGuardedAction(commandGuardAction(cmd)));
-    expect(unmapped.map((c) => c.name)).toEqual([]);
+  it('the domain catalog entries are defined once the module barrels load', () => {
+    const actions = new Set(listGuardedActions().map((s) => s.action));
+    for (const expected of [
+      'agents.create',
+      'a2a.send',
+      'self_mod.install_packages',
+      'self_mod.add_mcp_server',
+      'senders.admit',
+      'channels.register',
+    ]) {
+      expect(actions.has(expected), `catalog is missing "${expected}"`).toBe(true);
+    }
   });
 
-  it('every delivery action is guard-mapped or on the declared exemption list', () => {
-    const actions = listDeliveryActions();
-    expect(actions.length).toBeGreaterThan(0);
-
-    const unmapped = actions.filter(
-      ({ action, guardAction }) => guardAction === null && !EXEMPT_DELIVERY_ACTIONS.has(action),
+  it('defining the same action twice throws — names are the catalog key', () => {
+    defineGuardedAction({ action: 'test.dup-define', baseline: () => HOLD('x') });
+    expect(() => defineGuardedAction({ action: 'test.dup-define', baseline: () => HOLD('x') })).toThrow(
+      /already defined/,
     );
-    expect(unmapped.map((a) => a.action)).toEqual([]);
-
-    const danglingCatalog = actions.filter(({ guardAction }) => guardAction !== null && !getGuardedAction(guardAction));
-    expect(danglingCatalog.map((a) => a.action)).toEqual([]);
   });
 
-  it('the privileged delivery actions are the guarded ones', () => {
-    const guarded = Object.fromEntries(
-      listDeliveryActions()
-        .filter((a) => a.guardAction !== null)
-        .map((a) => [a.action, a.guardAction]),
-    );
-    expect(guarded).toEqual({
-      create_agent: 'agents.create',
-      install_packages: 'self_mod.install_packages',
-      add_mcp_server: 'self_mod.add_mcp_server',
+  // KEEP LAST: defines a holding action with no continuation into the shared
+  // per-worker catalog, so every gap check after this point sees it.
+  it('the check names a holding action with no approve continuation (what boot refuses on)', () => {
+    defineGuardedAction({
+      action: 'test.dangling-hold',
+      approvalAction: 'test_dangling_hold_approved',
+      baseline: () => HOLD('always'),
     });
-  });
 
-  // KEEP LAST: registers a rogue action into the shared per-worker registry,
-  // so every walk after this point sees the violation.
-  it('the walk names an unguarded, non-exempt delivery action (what the boot check refuses on)', () => {
-    registerDeliveryAction('test_rogue_privileged_action', async () => {});
-
-    const violations = guardConformanceViolations();
-    expect(violations).toHaveLength(1);
-    expect(violations[0]).toContain('test_rogue_privileged_action');
-    expect(violations[0]).toContain('neither guard-mapped nor on the declared exemption list');
+    const gaps = grantContinuationGaps();
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toContain('test.dangling-hold');
+    expect(gaps[0]).toContain('no approval handler');
   });
 });

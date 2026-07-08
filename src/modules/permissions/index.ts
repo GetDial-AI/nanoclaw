@@ -32,8 +32,8 @@ import { registerResponseHandler, type ResponsePayload } from '../../response-re
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, MessagingGroupAgent } from '../../types.js';
-import './guard.js';
-import { guard } from '../../guard/index.js';
+import { guard, unguarded } from '../../guard/index.js';
+import { channelsRegister, sendersAdmit } from './guard.js';
 import { canAccessAgentGroup } from './access.js';
 import {
   buildAgentSelectionOptions,
@@ -135,8 +135,7 @@ function handleUnknownSender(
   // — unknown_sender_policy verbatim: strict → deny, request_approval → hold,
   // public → allow (short-circuited before the gate). Drop-recording and the
   // hold creation stay here.
-  const decision = guard({
-    action: 'senders.admit',
+  const decision = guard(sendersAdmit, {
     actor: userId ? { kind: 'human', userId } : { kind: 'system' },
     payload: {
       messagingGroupId: mg.id,
@@ -294,7 +293,12 @@ async function handleSenderApprovalResponse(payload: ResponsePayload): Promise<b
   return true;
 }
 
-registerResponseHandler(handleSenderApprovalResponse);
+registerResponseHandler(
+  handleSenderApprovalResponse,
+  unguarded(
+    'self-authorizing — verifies the clicker inline (delivered approver or group admin) before adding a member',
+  ),
+);
 
 // ── Unknown-channel registration flow ──
 
@@ -518,7 +522,7 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
 }
 
 registerResponseHandler(handleChannelApprovalResponse, {
-  action: 'channels.register',
+  action: channelsRegister,
   claims: (payload) => getPendingChannelApproval(payload.questionId) !== undefined,
 });
 
@@ -640,7 +644,7 @@ const captureAgentNameReply = async (event: InboundEvent): Promise<boolean> => {
 };
 
 registerMessageInterceptor(captureAgentNameReply, {
-  action: 'channels.register',
+  action: channelsRegister,
   claims: (event) => {
     const userId = extractAndUpsertUser(event);
     if (!userId) return null;
