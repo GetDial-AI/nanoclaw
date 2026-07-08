@@ -148,9 +148,12 @@ class ClaudeProvider implements AgentProvider {
         systemPrompt: input.systemContext?.instructions
           ? { type: 'preset', preset: 'claude_code', append: input.systemContext.instructions }
           : undefined,
-        // Base tools plus one `mcp__<server>__*` pattern per registered MCP
-        // server — without the explicit MCP patterns the SDK's allowedTools
-        // filter silently drops every MCP namespace.
+        // Permission auto-approve list (NOT an availability filter — wire
+        // captures show no allowlist effect on the offered tool surface, and
+        // bypassPermissions moots its permission role). Kept accurate for a
+        // hypothetical non-bypass mode; the `mcp__<server>__*` patterns are
+        // retained because MCP invocation-gating under non-bypass modes is
+        // unverified. See sdk-tools-baseline.json + claude.tools.test.ts.
         allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
         disallowedTools: SDK_DISALLOWED_TOOLS,
         env: this.env,
@@ -195,7 +198,7 @@ SDK message (so the idle timer stays honest) and maps recognized messages to `Pr
 **Claude-specific behavior inside the provider:**
 - `MessageStream` for async iterable input (push-based follow-ups)
 - Resume via the SDK `resume` option keyed on the stored `continuation` (the SDK session ID) — no separate resume-at cursor
-- `TOOL_ALLOWLIST` (Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, Skill, …) extended at the call site with a `mcp__<server>__*` pattern per registered MCP server; `SDK_DISALLOWED_TOOLS` blocks SDK builtins that collide with NanoClaw's own scheduling/interaction model (CronCreate/Delete/List, ScheduleWakeup, AskUserQuestion, Enter/ExitPlanMode, Enter/ExitWorktree)
+- `TOOL_ALLOWLIST` (Agent, Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Skill, …) — a permission auto-approve list, not an availability filter (moot under `bypassPermissions`; wire-verified, see `claude.tools.test.ts`) — extended at the call site with a `mcp__<server>__*` pattern per registered MCP server; `SDK_DISALLOWED_TOOLS` blocks SDK builtins that collide with NanoClaw's own scheduling/interaction model (CronCreate/Delete/List, ScheduleWakeup, AskUserQuestion, Enter/ExitPlanMode, Enter/ExitWorktree)
 - **PreToolUse hook** records the current tool + its declared timeout to `container_state` (so the host sweep widens its stuck tolerance while a long Bash runs) and, as defense-in-depth, blocks any `SDK_DISALLOWED_TOOLS` call that slips through. It does **not** sanitize bash env vars — there is no such hook.
 - **PostToolUse / PostToolUseFailure** hooks clear the in-flight tool
 - **PreCompact** hook archives the transcript to `conversations/` before compaction
