@@ -327,6 +327,7 @@ export function registerResource(def: ResourceDef): void {
   if (def.operations.list) {
     register({
       name: `${def.plural}-list`,
+      action: `${def.plural}.list`,
       description: `List all ${def.plural}.`,
       access: def.operations.list,
       resource: def.plural,
@@ -339,6 +340,7 @@ export function registerResource(def: ResourceDef): void {
   if (def.operations.get) {
     register({
       name: `${def.plural}-get`,
+      action: `${def.plural}.get`,
       description: `Get a ${def.name} by ID.`,
       access: def.operations.get,
       resource: def.plural,
@@ -351,6 +353,7 @@ export function registerResource(def: ResourceDef): void {
   if (def.operations.create) {
     register({
       name: `${def.plural}-create`,
+      action: `${def.plural}.create`,
       description: `Create a new ${def.name}.`,
       access: def.operations.create,
       resource: def.plural,
@@ -362,6 +365,7 @@ export function registerResource(def: ResourceDef): void {
   if (def.operations.update) {
     register({
       name: `${def.plural}-update`,
+      action: `${def.plural}.update`,
       description: `Update a ${def.name}.`,
       access: def.operations.update,
       resource: def.plural,
@@ -373,6 +377,7 @@ export function registerResource(def: ResourceDef): void {
   if (def.operations.delete) {
     register({
       name: `${def.plural}-delete`,
+      action: `${def.plural}.delete`,
       description: `Delete a ${def.name}.`,
       access: def.operations.delete,
       resource: def.plural,
@@ -389,6 +394,7 @@ export function registerResource(def: ResourceDef): void {
       const declared = op.args;
       register({
         name: `${def.plural}-${verb.replace(/ /g, '-')}`,
+        action: `${def.plural}.${verb.replace(/ /g, '.')}`,
         description: op.description,
         access: op.access,
         resource: def.plural,

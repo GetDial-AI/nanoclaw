@@ -32,6 +32,8 @@ import { registerResponseHandler, type ResponsePayload } from '../../response-re
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, MessagingGroupAgent } from '../../types.js';
+import './guard.js';
+import { guard } from '../../guard/index.js';
 import { canAccessAgentGroup } from './access.js';
 import {
   buildAgentSelectionOptions,
@@ -129,43 +131,50 @@ function handleUnknownSender(
     agent_group_id: agentGroupId,
   };
 
-  if (mg.unknown_sender_policy === 'strict') {
-    log.info('MESSAGE DROPPED — unknown sender (strict policy)', {
+  // The admission decision is the guard's senders.admit baseline (./guard.ts)
+  // — unknown_sender_policy verbatim: strict → deny, request_approval → hold,
+  // public → allow (short-circuited before the gate). Drop-recording and the
+  // hold creation stay here.
+  const decision = guard({
+    action: 'senders.admit',
+    actor: userId ? { kind: 'human', userId } : { kind: 'system' },
+    payload: {
+      messagingGroupId: mg.id,
+      agentGroupId,
+      senderIdentity: userId,
+      policy: mg.unknown_sender_policy,
+    },
+  });
+
+  if (decision.effect === 'allow') return; // 'public' — handled before the gate; fall through silently.
+
+  log.info(
+    decision.effect === 'hold'
+      ? 'MESSAGE DROPPED — unknown sender (approval requested)'
+      : 'MESSAGE DROPPED — unknown sender (strict policy)',
+    {
       messagingGroupId: mg.id,
       agentGroupId,
       userId,
       accessReason,
-    });
-    recordDroppedMessage(dropRecord);
-    return;
-  }
+    },
+  );
+  recordDroppedMessage(dropRecord);
 
-  if (mg.unknown_sender_policy === 'request_approval') {
-    log.info('MESSAGE DROPPED — unknown sender (approval requested)', {
+  // Fire-and-forget; pick-approver + delivery + row-insert are all async.
+  // If it fails it logs internally — the user's message still stays dropped
+  // either way. Requires a resolved userId (senderResolver populates users
+  // row before the gate fires); if we got here without one, there's nothing
+  // to identify for approval and we just drop silently.
+  if (decision.effect === 'hold' && userId) {
+    requestSenderApproval({
       messagingGroupId: mg.id,
       agentGroupId,
-      userId,
-      accessReason,
-    });
-    recordDroppedMessage(dropRecord);
-    // Fire-and-forget; pick-approver + delivery + row-insert are all async.
-    // If it fails it logs internally — the user's message still stays dropped
-    // either way. Requires a resolved userId (senderResolver populates users
-    // row before the gate fires); if we got here without one, there's nothing
-    // to identify for approval and we just stay in the "silent strict" branch.
-    if (userId) {
-      requestSenderApproval({
-        messagingGroupId: mg.id,
-        agentGroupId,
-        senderIdentity: userId,
-        senderName,
-        event,
-      }).catch((err) => log.error('Sender-approval flow threw', { err }));
-    }
-    return;
+      senderIdentity: userId,
+      senderName,
+      event,
+    }).catch((err) => log.error('Sender-approval flow threw', { err }));
   }
-
-  // 'public' should have been handled before the gate; fall through silently.
 }
 
 setSenderResolver(extractAndUpsertUser);
@@ -311,21 +320,14 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   const row = getPendingChannelApproval(payload.questionId);
   if (!row) return false;
 
+  // Click authorization is the guard's channels.register baseline (./guard.ts),
+  // consulted by the response-registry wrapper before this handler runs.
   const clickerId = payload.userId
     ? payload.userId.includes(':')
       ? payload.userId
       : `${payload.channelType}:${payload.userId}`
     : null;
-  const isAuthorized =
-    clickerId !== null && (clickerId === row.approver_user_id || hasAdminPrivilege(clickerId, row.agent_group_id));
-  if (!isAuthorized) {
-    log.warn('Channel registration click rejected — unauthorized clicker', {
-      messagingGroupId: row.messaging_group_id,
-      clickerId,
-      expectedApprover: row.approver_user_id,
-    });
-    return true;
-  }
+  if (!clickerId) return true; // unreachable behind the guard wrapper; fail closed
   const approverId = clickerId;
 
   // ── Reject / Cancel ──
@@ -515,13 +517,19 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   return true;
 }
 
-registerResponseHandler(handleChannelApprovalResponse);
+registerResponseHandler(handleChannelApprovalResponse, {
+  action: 'channels.register',
+  claims: (payload) => getPendingChannelApproval(payload.questionId) !== undefined,
+});
 
 // ── Free-text name interceptor ──
 // Captures the next DM from an approver who clicked "Create new agent",
-// creates the agent immediately, wires the channel, and replays.
+// creates the agent immediately, wires the channel, and replays. The router
+// wraps it with the guard: the free-texter must still be an eligible
+// channel-registration approver at reply time — a privilege revoked between
+// the click and the reply now denies, and the arming is disarmed.
 
-registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
+const captureAgentNameReply = async (event: InboundEvent): Promise<boolean> => {
   const userId = extractAndUpsertUser(event);
   if (!userId) return false;
 
@@ -629,4 +637,20 @@ registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
     }
   }
   return true;
+};
+
+registerMessageInterceptor(captureAgentNameReply, {
+  action: 'channels.register',
+  claims: (event) => {
+    const userId = extractAndUpsertUser(event);
+    if (!userId) return null;
+    const pending = awaitingNameInput.get(userId);
+    if (!pending) return null;
+    if (event.channelType !== pending.dmChannelType || event.platformId !== pending.dmPlatformId) return null;
+    return { actor: { kind: 'human', userId }, payload: { questionId: pending.channelMgId } };
+  },
+  onDeny: (event) => {
+    const userId = extractAndUpsertUser(event);
+    if (userId) awaitingNameInput.delete(userId);
+  },
 });

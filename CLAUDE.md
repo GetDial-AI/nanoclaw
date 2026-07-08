@@ -66,6 +66,7 @@ For ad-hoc queries from skills or scripts, use the in-tree wrapper rather than t
 | `src/session-manager.ts` | Resolves sessions; opens `inbound.db` / `outbound.db`; manages heartbeat path |
 | `src/container-runner.ts` | Spawns per-agent-group Docker containers with session DB + outbox mounts, OneCLI `ensureAgent` |
 | `src/container-runtime.ts` | Docker CLI wrapper (runtime binary, host-gateway args, mount args), orphan cleanup |
+| `src/guard/` | Privileged-action decision seam: `guard()` → allow \| hold \| deny. Domain-free leaf (decision function + registration-derived action catalog); domain baselines register from module-edge `guard.ts` adapters (cli, agent-to-agent, self-mod, permissions). All four handler registries wrap at registration; approved replays carry the approval row as a grant and re-check the structural baseline. Policy-as-data (tighten-only rule sources) is deferred to guarded-actions phase 3. Conformance test: `src/guard/conformance.test.ts` |
 | `src/modules/permissions/access.ts` | `canAccessAgentGroup` — owner / global admin / scoped admin / member resolution against `user_roles` + `agent_group_members` |
 | `src/modules/approvals/primitive.ts` | `pickApprover`, `pickApprovalDelivery`, `requestApproval`, approval-handler registry |
 | `src/command-gate.ts` | Router-side admin command gate — queries `user_roles` directly (no env var, no container-side check) |
