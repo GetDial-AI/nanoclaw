@@ -98,7 +98,7 @@ registerRuleSource((input) => {
   return [
     {
       effect: 'hold',
-      eligibility: { kind: 'exclusive', approverUserId: policy.approver },
+      approverRule: { kind: 'exclusive', approverUserId: policy.approver },
       reason: `a2a message policy ${input.actor.agentGroupId}→${to} holds for ${policy.approver}`,
     },
   ];

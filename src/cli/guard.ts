@@ -29,7 +29,7 @@ import type { CommandDef } from './registry.js';
 export const GROUP_SCOPED_RESOURCES = new Set(['groups', 'sessions', 'destinations', 'members']);
 
 /**
- * Blast radius of a held command, for approver eligibility (D1): a mutation
+ * Blast radius of a held command, for the approver rule (D1): a mutation
  * of a non-group-scoped resource (roles, users, wirings, messaging-groups,
  * policies) — or one explicitly targeting another agent group — needs an
  * owner or global admin to approve; a scoped admin's click is rejected.

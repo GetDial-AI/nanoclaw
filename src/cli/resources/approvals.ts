@@ -54,7 +54,7 @@ registerResource({
       description: 'Named approver (exclusive) or the admin the card was delivered to (admins-of-scope).',
     },
     {
-      name: 'eligibility',
+      name: 'approver_rule',
       type: 'string',
       description: 'Who may resolve: only the named approver, or the admin chain of the anchoring group.',
       enum: ['exclusive', 'admins-of-scope'],

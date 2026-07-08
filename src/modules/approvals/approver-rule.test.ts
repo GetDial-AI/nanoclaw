@@ -1,14 +1,14 @@
 /**
  * mayResolve matrix — the one click-authorization rule for every hold.
  *
- * Covers each eligibility kind × clicker role × approver scope, including:
+ * Covers each approver-rule kind × clicker role × approver scope, including:
  *  - exclusive named approvers (a2a policy semantics: nobody else, not even
  *    an owner, may resolve)
  *  - admins-of-scope with and without a delivered approver (the
  *    sender/channel "named-or-admin" semantic)
  *  - the null-anchor variant (owners + global admins only)
  *  - the D1 fix: a 'global'-scope hold rejects a scoped admin's click even
- *    though the eligibility rule would otherwise accept it
+ *    though the approver rule would otherwise accept it
  *
  * Plus an end-to-end D1 regression through the real response handler: a
  * global-blast CLI hold (e.g. roles grant) clicked by a scoped admin is
@@ -23,7 +23,7 @@ import { createSession, createPendingApproval, getPendingApproval } from '../../
 import { upsertUser } from '../permissions/db/users.js';
 import { grantRole } from '../permissions/db/user-roles.js';
 import { initSessionFolder } from '../../session-manager.js';
-import { eligibilityOf, mayResolve } from './eligibility.js';
+import { approverRuleOf, mayResolve } from './approver-rule.js';
 import { registerApprovalHandler } from './primitive.js';
 import { handleApprovalsResponse } from './response-handler.js';
 
@@ -33,10 +33,10 @@ vi.mock('../../container-runner.js', () => ({
 
 vi.mock('../../config.js', async () => {
   const actual = await vi.importActual('../../config.js');
-  return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-eligibility' };
+  return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-approver-rule' };
 });
 
-const TEST_DIR = '/tmp/nanoclaw-test-eligibility';
+const TEST_DIR = '/tmp/nanoclaw-test-approver-rule';
 
 function now() {
   return new Date().toISOString();
@@ -132,25 +132,25 @@ describe('mayResolve matrix', () => {
     expect(mayResolve(e, 'global', GLOBAL_ADMIN)).toBe(true);
   });
 
-  it('eligibilityOf maps row columns onto the rule', () => {
+  it('approverRuleOf maps row columns onto the rule', () => {
     const base = { agent_group_id: 'ag-1' };
-    expect(eligibilityOf({ ...base, eligibility: 'exclusive', approver_user_id: DELIVEREE })).toEqual({
+    expect(approverRuleOf({ ...base, approver_rule: 'exclusive', approver_user_id: DELIVEREE })).toEqual({
       kind: 'exclusive',
       approverUserId: DELIVEREE,
     });
-    expect(eligibilityOf({ ...base, eligibility: 'admins-of-scope', approver_user_id: DELIVEREE })).toEqual({
+    expect(approverRuleOf({ ...base, approver_rule: 'admins-of-scope', approver_user_id: DELIVEREE })).toEqual({
       kind: 'admins-of-scope',
       agentGroupId: 'ag-1',
       deliveredTo: DELIVEREE,
     });
-    expect(eligibilityOf({ ...base, eligibility: 'admins-of-scope', approver_user_id: null })).toEqual({
+    expect(approverRuleOf({ ...base, approver_rule: 'admins-of-scope', approver_user_id: null })).toEqual({
       kind: 'admins-of-scope',
       agentGroupId: 'ag-1',
       deliveredTo: null,
     });
     // Malformed exclusive (no named user) falls back to the admin chain
     // instead of bricking the hold.
-    expect(eligibilityOf({ ...base, eligibility: 'exclusive', approver_user_id: null })).toEqual({
+    expect(approverRuleOf({ ...base, approver_rule: 'exclusive', approver_user_id: null })).toEqual({
       kind: 'admins-of-scope',
       agentGroupId: 'ag-1',
       deliveredTo: null,

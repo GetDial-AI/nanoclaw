@@ -1,7 +1,7 @@
 /**
  * Guard decision-function unit tests: the strictest-wins lattice
  * (deny > hold > allow), per-cell rule×baseline composition, hold∧hold
- * eligibility intersection (incl. the empty-intersection owner escalation),
+ * approver-rule intersection (incl. the empty-intersection owner escalation),
  * grant semantics (satisfies holds, never denies; invalid → refuse), the
  * non-catalog allow, and the fail-closed posture on throwing sources.
  *
@@ -10,7 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ApproverEligibility } from '../types.js';
+import type { ApproverRule } from '../types.js';
 import { guard } from './guard.js';
 import { registerGuardedAction } from './catalog.js';
 import { registerRuleSource } from './rules.js';
@@ -30,10 +30,10 @@ function input(action: string, extra: Partial<GuardInput> = {}): GuardInput {
   return { action, actor: AGENT, payload: {}, ...extra };
 }
 
-const AOS_G1: ApproverEligibility = { kind: 'admins-of-scope', agentGroupId: 'ag-1', deliveredTo: null };
-const AOS_G2: ApproverEligibility = { kind: 'admins-of-scope', agentGroupId: 'ag-2', deliveredTo: null };
-const EX_DANA: ApproverEligibility = { kind: 'exclusive', approverUserId: 'tg:dana' };
-const EX_SAM: ApproverEligibility = { kind: 'exclusive', approverUserId: 'tg:sam' };
+const AOS_G1: ApproverRule = { kind: 'admins-of-scope', agentGroupId: 'ag-1', deliveredTo: null };
+const AOS_G2: ApproverRule = { kind: 'admins-of-scope', agentGroupId: 'ag-2', deliveredTo: null };
+const EX_DANA: ApproverRule = { kind: 'exclusive', approverUserId: 'tg:dana' };
+const EX_SAM: ApproverRule = { kind: 'exclusive', approverUserId: 'tg:sam' };
 
 beforeEach(() => {
   mockGetPendingApproval.mockReset();
@@ -55,15 +55,17 @@ describe('lattice — strictest wins', () => {
 
   it('baseline allow + rule hold → hold (a rule tightens a structural allow)', () => {
     registerGuardedAction({ action: 't.allow2', baseline: () => ALLOW('ok') });
-    registerRuleSource((i) => (i.action === 't.allow2' ? [{ effect: 'hold', eligibility: EX_DANA, reason: 'r' }] : []));
+    registerRuleSource((i) =>
+      i.action === 't.allow2' ? [{ effect: 'hold', approverRule: EX_DANA, reason: 'r' }] : [],
+    );
     const d = guard(input('t.allow2'));
     expect(d.effect).toBe('hold');
-    if (d.effect === 'hold') expect(d.eligibility).toEqual(EX_DANA);
+    if (d.effect === 'hold') expect(d.approverRule).toEqual(EX_DANA);
   });
 
   it('baseline deny + rule hold → deny (the ghost-policy cell: deny beats hold)', () => {
     registerGuardedAction({ action: 't.deny1', baseline: () => DENY('structurally unauthorized') });
-    registerRuleSource((i) => (i.action === 't.deny1' ? [{ effect: 'hold', eligibility: EX_DANA, reason: 'r' }] : []));
+    registerRuleSource((i) => (i.action === 't.deny1' ? [{ effect: 'hold', approverRule: EX_DANA, reason: 'r' }] : []));
     const d = guard(input('t.deny1'));
     expect(d.effect).toBe('deny');
     if (d.effect === 'deny') expect(d.reason).toBe('structurally unauthorized');
@@ -87,46 +89,46 @@ describe('lattice — strictest wins', () => {
   });
 });
 
-describe('hold ∧ hold — eligibility intersection', () => {
+describe('hold ∧ hold — approver-rule intersection', () => {
   it('identical admin scopes stay that scope', () => {
     registerGuardedAction({ action: 't.ii1', baseline: () => HOLD(AOS_G1, 'group', 'b') });
-    registerRuleSource((i) => (i.action === 't.ii1' ? [{ effect: 'hold', eligibility: AOS_G1, reason: 'r' }] : []));
+    registerRuleSource((i) => (i.action === 't.ii1' ? [{ effect: 'hold', approverRule: AOS_G1, reason: 'r' }] : []));
     const d = guard(input('t.ii1'));
     expect(d.effect).toBe('hold');
-    if (d.effect === 'hold') expect(d.eligibility).toEqual(AOS_G1);
+    if (d.effect === 'hold') expect(d.approverRule).toEqual(AOS_G1);
   });
 
   it('different admin scopes intersect to the global chain (owners/global admins are in every scope)', () => {
     registerGuardedAction({ action: 't.ii2', baseline: () => HOLD(AOS_G1, 'group', 'b') });
-    registerRuleSource((i) => (i.action === 't.ii2' ? [{ effect: 'hold', eligibility: AOS_G2, reason: 'r' }] : []));
+    registerRuleSource((i) => (i.action === 't.ii2' ? [{ effect: 'hold', approverRule: AOS_G2, reason: 'r' }] : []));
     const d = guard(input('t.ii2'));
     expect(d.effect).toBe('hold');
     if (d.effect === 'hold') {
-      expect(d.eligibility).toEqual({ kind: 'admins-of-scope', agentGroupId: null, deliveredTo: null });
+      expect(d.approverRule).toEqual({ kind: 'admins-of-scope', agentGroupId: null, deliveredTo: null });
     }
   });
 
   it('exclusive ∩ admin scope keeps the named approver (the more specific tightening)', () => {
     registerGuardedAction({ action: 't.ii3', baseline: () => HOLD(AOS_G1, 'group', 'b') });
-    registerRuleSource((i) => (i.action === 't.ii3' ? [{ effect: 'hold', eligibility: EX_DANA, reason: 'r' }] : []));
+    registerRuleSource((i) => (i.action === 't.ii3' ? [{ effect: 'hold', approverRule: EX_DANA, reason: 'r' }] : []));
     const d = guard(input('t.ii3'));
     expect(d.effect).toBe('hold');
-    if (d.effect === 'hold') expect(d.eligibility).toEqual(EX_DANA);
+    if (d.effect === 'hold') expect(d.approverRule).toEqual(EX_DANA);
   });
 
   it('two different exclusive approvers = empty intersection → escalates to the global chain', () => {
     registerGuardedAction({ action: 't.ii4', baseline: () => HOLD(EX_SAM, 'group', 'b') });
-    registerRuleSource((i) => (i.action === 't.ii4' ? [{ effect: 'hold', eligibility: EX_DANA, reason: 'r' }] : []));
+    registerRuleSource((i) => (i.action === 't.ii4' ? [{ effect: 'hold', approverRule: EX_DANA, reason: 'r' }] : []));
     const d = guard(input('t.ii4'));
     expect(d.effect).toBe('hold');
     if (d.effect === 'hold') {
-      expect(d.eligibility).toEqual({ kind: 'admins-of-scope', agentGroupId: null, deliveredTo: null });
+      expect(d.approverRule).toEqual({ kind: 'admins-of-scope', agentGroupId: null, deliveredTo: null });
     }
   });
 
   it('approver scope composes as max: any global leg makes the hold global', () => {
     registerGuardedAction({ action: 't.ii5', baseline: () => HOLD(AOS_G1, 'global', 'b') });
-    registerRuleSource((i) => (i.action === 't.ii5' ? [{ effect: 'hold', eligibility: AOS_G1, reason: 'r' }] : []));
+    registerRuleSource((i) => (i.action === 't.ii5' ? [{ effect: 'hold', approverRule: AOS_G1, reason: 'r' }] : []));
     const d = guard(input('t.ii5'));
     expect(d.effect).toBe('hold');
     if (d.effect === 'hold') expect(d.approverScope).toBe('global');

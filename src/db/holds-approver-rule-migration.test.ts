@@ -1,7 +1,7 @@
 /**
- * Upgrade-path test for migration 019 (holds-eligibility): in-flight
+ * Upgrade-path test for migration 019 (holds-approver-rule): in-flight
  * pending_approvals rows created by the pre-contract code must come out with
- * the eligibility the old click-auth gave them, and the sender table must be
+ * the approver rule the old click-auth gave them, and the sender table must be
  * gone.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,10 +14,10 @@ let db: Database.Database;
 
 beforeEach(() => {
   db = initTestDb();
-  // Everything up to — but not including — the holds-eligibility migration.
+  // Everything up to — but not including — the holds-approver-rule migration.
   runMigrations(
     db,
-    migrations.filter((m) => m.name !== 'holds-eligibility'),
+    migrations.filter((m) => m.name !== 'holds-approver-rule'),
   );
 });
 
@@ -29,8 +29,8 @@ function hasTable(name: string): boolean {
   return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
 }
 
-describe('migration 019 — holds-eligibility', () => {
-  it('backfills eligibility and agent_group_id on in-flight rows and drops the sender table', () => {
+describe('migration 019 — holds-approver-rule', () => {
+  it('backfills approver_rule and agent_group_id on in-flight rows and drops the sender table', () => {
     const now = new Date().toISOString();
     db.prepare("INSERT INTO agent_groups (id, name, folder, created_at) VALUES ('ag-1', 'One', 'one', ?)").run(now);
     db.prepare(
@@ -56,24 +56,24 @@ describe('migration 019 — holds-eligibility', () => {
 
     expect(hasTable('pending_sender_approvals')).toBe(true);
 
-    runMigrations(db); // applies only holds-eligibility
+    runMigrations(db); // applies only holds-approver-rule
 
     const rows = db
-      .prepare('SELECT approval_id, eligibility, approver_scope, agent_group_id FROM pending_approvals')
-      .all() as Array<{ approval_id: string; eligibility: string; approver_scope: string; agent_group_id: string }>;
+      .prepare('SELECT approval_id, approver_rule, approver_scope, agent_group_id FROM pending_approvals')
+      .all() as Array<{ approval_id: string; approver_rule: string; approver_scope: string; agent_group_id: string }>;
     const byId = Object.fromEntries(rows.map((r) => [r.approval_id, r]));
 
     expect(byId['appr-a2a']).toMatchObject({
-      eligibility: 'exclusive',
+      approver_rule: 'exclusive',
       approver_scope: 'group',
       agent_group_id: 'ag-1',
     });
     expect(byId['appr-cli']).toMatchObject({
-      eligibility: 'admins-of-scope',
+      approver_rule: 'admins-of-scope',
       approver_scope: 'group',
       agent_group_id: 'ag-1',
     });
-    expect(byId['oa-1']).toMatchObject({ eligibility: 'admins-of-scope', agent_group_id: 'ag-1' });
+    expect(byId['oa-1']).toMatchObject({ approver_rule: 'admins-of-scope', agent_group_id: 'ag-1' });
 
     expect(hasTable('pending_sender_approvals')).toBe(false);
   });

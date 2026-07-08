@@ -7,7 +7,7 @@
  * structural allow into a hold or deny; nothing in data can loosen the
  * baseline. Non-catalog actions (reads, scheduling self-actions) allow.
  *
- * Holds compose by intersecting approver eligibility (decision 4 of the
+ * Holds compose by intersecting approver rules (decision 4 of the
  * guarded-actions design): two identical rules keep their rule; two
  * different admin scopes intersect to the global chain (owners + global
  * admins belong to every scope's chain); two different exclusive approvers
@@ -25,7 +25,7 @@
  */
 import { getPendingApproval } from '../db/sessions.js';
 import { log } from '../log.js';
-import type { ApproverEligibility, ApproverScope } from '../types.js';
+import type { ApproverRule, ApproverScope } from '../types.js';
 import { getGuardedAction } from './catalog.js';
 import { collectRuleDecisions } from './rules.js';
 import { ALLOW, DENY, type GuardDecision, type GuardInput, type RuleDecision } from './types.js';
@@ -72,17 +72,17 @@ function compose(rules: RuleDecision[], baseline: GuardDecision, action: string)
   ];
   if (holds.length === 0) return baseline;
 
-  let eligibility = holds[0].eligibility;
+  let approverRule = holds[0].approverRule;
   for (const hold of holds.slice(1)) {
-    const next = intersectEligibility(eligibility, hold.eligibility);
+    const next = intersectApproverRules(approverRule, hold.approverRule);
     if (next === 'empty') {
       log.warn('Hold composition produced an empty approver intersection — escalating to owners', {
         action,
         reasons: holds.map((h) => h.reason),
       });
-      eligibility = { kind: 'admins-of-scope', agentGroupId: null, deliveredTo: null };
+      approverRule = { kind: 'admins-of-scope', agentGroupId: null, deliveredTo: null };
     } else {
-      eligibility = next;
+      approverRule = next;
     }
   }
 
@@ -94,14 +94,14 @@ function compose(rules: RuleDecision[], baseline: GuardDecision, action: string)
 
   return {
     effect: 'hold',
-    eligibility,
+    approverRule,
     approverScope,
     reason: holds.map((h) => h.reason).join('; '),
   };
 }
 
 /**
- * Intersect two eligibility rules. Every admins-of-scope set contains the
+ * Intersect two approver rules. Every admins-of-scope set contains the
  * owners and global admins, so two different scopes intersect to the global
  * chain (agentGroupId null). Two different exclusive approvers share nobody —
  * the caller escalates that conflict. An exclusive rule intersected with an
@@ -109,7 +109,7 @@ function compose(rules: RuleDecision[], baseline: GuardDecision, action: string)
  * full set semantics arrive with org rules, which is when this pairing first
  * becomes reachable.
  */
-function intersectEligibility(a: ApproverEligibility, b: ApproverEligibility): ApproverEligibility | 'empty' {
+function intersectApproverRules(a: ApproverRule, b: ApproverRule): ApproverRule | 'empty' {
   if (a.kind === 'exclusive' && b.kind === 'exclusive') {
     return a.approverUserId === b.approverUserId ? a : 'empty';
   }

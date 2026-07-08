@@ -4,7 +4,7 @@ import type { Migration } from './index.js';
  * The hold-record contract lands on `pending_approvals` (guarded-actions
  * phase 1 — see the guarded-actions decisions doc, decision 5):
  *
- *   - `eligibility` — who may resolve the hold: 'exclusive' (only
+ *   - `approver_rule` — who may resolve the hold: 'exclusive' (only
  *     `approver_user_id`, e.g. an a2a policy's named approver) or
  *     'admins-of-scope' (the admin chain of `agent_group_id`, plus the
  *     specific user the card was delivered to when `approver_user_id` is
@@ -27,12 +27,12 @@ import type { Migration } from './index.js';
  */
 export const migration019: Migration = {
   version: 19,
-  name: 'holds-eligibility',
+  name: 'holds-approver-rule',
   up(db) {
-    db.exec(`ALTER TABLE pending_approvals ADD COLUMN eligibility TEXT NOT NULL DEFAULT 'admins-of-scope';`);
+    db.exec(`ALTER TABLE pending_approvals ADD COLUMN approver_rule TEXT NOT NULL DEFAULT 'admins-of-scope';`);
     db.exec(`ALTER TABLE pending_approvals ADD COLUMN approver_scope TEXT NOT NULL DEFAULT 'group';`);
     db.exec(`ALTER TABLE pending_approvals ADD COLUMN dedup_key TEXT;`);
-    db.exec(`UPDATE pending_approvals SET eligibility = 'exclusive' WHERE approver_user_id IS NOT NULL;`);
+    db.exec(`UPDATE pending_approvals SET approver_rule = 'exclusive' WHERE approver_user_id IS NOT NULL;`);
     db.exec(
       `UPDATE pending_approvals
          SET agent_group_id = (SELECT s.agent_group_id FROM sessions s WHERE s.id = pending_approvals.session_id)

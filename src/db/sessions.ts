@@ -155,11 +155,11 @@ export function createPendingApproval(
       `INSERT OR IGNORE INTO pending_approvals
          (approval_id, session_id, request_id, action, payload, created_at,
           agent_group_id, channel_type, platform_id, platform_message_id, expires_at, status,
-          title, options_json, approver_user_id, eligibility, approver_scope, dedup_key)
+          title, options_json, approver_user_id, approver_rule, approver_scope, dedup_key)
        VALUES
          (@approval_id, @session_id, @request_id, @action, @payload, @created_at,
           @agent_group_id, @channel_type, @platform_id, @platform_message_id, @expires_at, @status,
-          @title, @options_json, @approver_user_id, @eligibility, @approver_scope, @dedup_key)`,
+          @title, @options_json, @approver_user_id, @approver_rule, @approver_scope, @dedup_key)`,
     )
     .run({
       session_id: null,
@@ -170,7 +170,7 @@ export function createPendingApproval(
       expires_at: null,
       status: 'pending',
       approver_user_id: null,
-      eligibility: 'admins-of-scope',
+      approver_rule: 'admins-of-scope',
       approver_scope: 'group',
       dedup_key: null,
       ...pa,

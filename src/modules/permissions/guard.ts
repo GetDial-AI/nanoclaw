@@ -6,7 +6,7 @@
  * registration (create wiring, create agent group, add member) are reachable
  * through two doors: the approval-card click (response handler) and the
  * free-text name reply (interceptor). Both consult this baseline with the
- * clicking/replying human as the actor: eligibility is the global chain —
+ * clicking/replying human as the actor: the approver rule is the global chain —
  * owner / global admin — plus the specific approver the card was delivered
  * to (the D4 fix; previously the anchor was whichever agent group sorted
  * first, and the free-text door had no check at all).
@@ -17,7 +17,7 @@
  * unknown, fail-closed) denies.
  */
 import { ALLOW, DENY, HOLD, registerGuardedAction } from '../../guard/index.js';
-import { mayResolve } from '../approvals/eligibility.js';
+import { mayResolve } from '../approvals/approver-rule.js';
 import { getPendingChannelApproval } from './db/pending-channel-approvals.js';
 import { SENDER_ADMIT_ACTION } from './sender-approval.js';
 

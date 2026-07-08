@@ -379,7 +379,7 @@ describe('unknown-channel registration flow', () => {
     expect(stillPending).toBe(1);
   });
 
-  it('does not let a scoped admin drive channel registration at all (D4: owner/global-admin eligibility)', async () => {
+  it('does not let a scoped admin drive channel registration at all (D4: owner/global-admin approver rule)', async () => {
     const { routeInbound } = await import('../../router.js');
     const { getResponseHandlers } = await import('../../response-registry.js');
     const { getDb } = await import('../../db/connection.js');

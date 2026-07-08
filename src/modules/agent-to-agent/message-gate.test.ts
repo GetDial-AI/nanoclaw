@@ -81,7 +81,7 @@ function seedA2aHold(approvalId: string, payload: Record<string, unknown>): Pend
     title: 'Message approval',
     options_json: '[]',
     approver_user_id: 'telegram:dana',
-    eligibility: 'exclusive',
+    approver_rule: 'exclusive',
   });
   return getPendingApproval(approvalId)!;
 }

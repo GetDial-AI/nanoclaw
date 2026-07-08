@@ -120,7 +120,7 @@ function liveGrant(approvalId: string, payload: Record<string, unknown>): Pendin
     title: '',
     options_json: '[]',
     approver_user_id: null,
-    eligibility: 'admins-of-scope',
+    approver_rule: 'admins-of-scope',
     approver_scope: 'group',
     dedup_key: null,
   } as PendingApproval;

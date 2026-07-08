@@ -6,7 +6,7 @@
  * attempt and calls `requestSenderApproval`, which holds through the
  * approvals primitive (action 'sender_admit'):
  *
- *   - approver eligibility: the agent group's admin chain, plus the specific
+ *   - approver rule: the agent group's admin chain, plus the specific
  *     admin the card was delivered to (named-or-admin);
  *   - in-flight dedup via the hold's dedup key — a retry / rapid second
  *     message from the same unknown sender is silently dropped (no duplicate

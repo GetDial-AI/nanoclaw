@@ -12,8 +12,8 @@
  *   2. OneCLI credential approvals (`action = 'onecli_credential'`). Resolved
  *      via an in-memory Promise — see onecli-approvals.ts.
  *
- * Click authorization is `mayResolve` over the hold's eligibility rule +
- * approver scope (eligibility.ts) — the one shared rule for every hold.
+ * Click authorization is `mayResolve` over the hold's approver rule +
+ * approver scope (approver-rule.ts) — the one shared rule for every hold.
  *
  * The response handler is registered via core's `registerResponseHandler`;
  * core iterates handlers and the first one to return `true` claims the response.
@@ -24,7 +24,7 @@ import type { ResponsePayload } from '../../response-registry.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { PendingApproval, Session } from '../../types.js';
-import { eligibilityOf, mayResolve } from './eligibility.js';
+import { approverRuleOf, mayResolve } from './approver-rule.js';
 import { finalizeReject } from './finalize.js';
 import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
 import { getApprovalHandler, notifyApprovalResolved, REJECT_WITH_REASON_VALUE } from './primitive.js';
@@ -35,7 +35,7 @@ export async function handleApprovalsResponse(payload: ResponsePayload): Promise
   if (!approval) return false;
 
   const clickerId = namespacedUserId(payload);
-  if (!mayResolve(eligibilityOf(approval), approval.approver_scope, clickerId)) {
+  if (!mayResolve(approverRuleOf(approval), approval.approver_scope, clickerId)) {
     log.warn('Ignoring unauthorized approval response', {
       approvalId: approval.approval_id,
       action: approval.action,

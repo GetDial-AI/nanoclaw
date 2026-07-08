@@ -194,9 +194,9 @@ export interface PendingQuestion {
  * approver). `admins-of-scope`: the admin chain of the anchoring agent group
  * (owners + global admins when the anchor is null), plus the user the card
  * was delivered to when recorded. Evaluation lives in
- * src/modules/approvals/eligibility.ts (`mayResolve`).
+ * src/modules/approvals/approver-rule.ts (`mayResolve`).
  */
-export type ApproverEligibility =
+export type ApproverRule =
   | { kind: 'exclusive'; approverUserId: string }
   | { kind: 'admins-of-scope'; agentGroupId: string | null; deliveredTo: string | null };
 
@@ -224,13 +224,13 @@ export interface PendingApproval {
   title: string;
   options_json: string;
   /**
-   * Named approver. Under `eligibility: 'exclusive'` only this exact user may
-   * resolve the approval; under 'admins-of-scope' it records the user the card
-   * was delivered to, who may resolve alongside the scope's admins.
+   * Named approver. Under `approver_rule: 'exclusive'` only this exact user
+   * may resolve the approval; under 'admins-of-scope' it records the user the
+   * card was delivered to, who may resolve alongside the scope's admins.
    */
   approver_user_id: string | null;
-  /** Who may resolve this hold — see modules/approvals/eligibility.ts. */
-  eligibility: 'exclusive' | 'admins-of-scope';
+  /** Who may resolve this hold — see modules/approvals/approver-rule.ts. */
+  approver_rule: 'exclusive' | 'admins-of-scope';
   /** Blast radius: 'global' holds require an owner or global admin to resolve. */
   approver_scope: 'group' | 'global';
   /** In-flight dedup key: while a row carries this key, a repeat request with the same key is dropped. */

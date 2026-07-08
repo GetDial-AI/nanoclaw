@@ -264,7 +264,7 @@ export async function routeAgentMessage(
   // consumes the outbound row; `applyA2aMessageGate` re-enters here with the
   // grant on approve.
   if (decision.effect === 'hold') {
-    const approver = decision.eligibility.kind === 'exclusive' ? decision.eligibility.approverUserId : undefined;
+    const approver = decision.approverRule.kind === 'exclusive' ? decision.approverRule.approverUserId : undefined;
     const sourceName = getAgentGroup(sourceAgentGroupId)?.name ?? sourceAgentGroupId;
     const targetName = getAgentGroup(targetAgentGroupId)?.name ?? targetAgentGroupId;
     await requestApproval({

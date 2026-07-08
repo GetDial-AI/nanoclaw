@@ -7,7 +7,7 @@
  * arrives via registration: catalog entries (catalog.ts) and rule sources
  * (rules.ts) are registered by the domain modules at their module edges.
  */
-import type { ApproverEligibility, ApproverScope, PendingApproval } from '../types.js';
+import type { ApproverRule, ApproverScope, PendingApproval } from '../types.js';
 
 /** Who is attempting the action. Mirrors the CLI CallerContext + click identities. */
 export type GuardActor =
@@ -34,18 +34,19 @@ export interface GuardInput {
 
 export type GuardDecision =
   | { effect: 'allow'; reason: string }
-  | { effect: 'hold'; eligibility: ApproverEligibility; approverScope: ApproverScope; reason: string }
+  | { effect: 'hold'; approverRule: ApproverRule; approverScope: ApproverScope; reason: string }
   | { effect: 'deny'; reason: string };
 
 /** Tighten-only decision a rule source may produce — rules can never allow. */
 export type RuleDecision =
-  | { effect: 'hold'; eligibility: ApproverEligibility; approverScope?: ApproverScope; reason: string }
+  | { effect: 'hold'; approverRule: ApproverRule; approverScope?: ApproverScope; reason: string }
   | { effect: 'deny'; reason: string };
 
 export const ALLOW = (reason: string): GuardDecision => ({ effect: 'allow', reason });
 export const DENY = (reason: string): GuardDecision => ({ effect: 'deny', reason });
-export const HOLD = (
-  eligibility: ApproverEligibility,
-  approverScope: ApproverScope,
-  reason: string,
-): GuardDecision => ({ effect: 'hold', eligibility, approverScope, reason });
+export const HOLD = (approverRule: ApproverRule, approverScope: ApproverScope, reason: string): GuardDecision => ({
+  effect: 'hold',
+  approverRule,
+  approverScope,
+  reason,
+});

@@ -198,16 +198,16 @@ describe('unknown-sender request_approval flow', () => {
     const rows = getDb().prepare("SELECT * FROM pending_approvals WHERE action = 'sender_admit'").all() as Array<{
       session_id: string | null;
       agent_group_id: string;
-      eligibility: string;
+      approver_rule: string;
       approver_user_id: string;
       dedup_key: string;
     }>;
     expect(rows).toHaveLength(1);
     // Hold-record contract: sessionless, anchored to the agent group,
-    // named-or-admin eligibility with the delivered approver recorded.
+    // named-or-admin approver rule with the delivered approver recorded.
     expect(rows[0].session_id).toBeNull();
     expect(rows[0].agent_group_id).toBe('ag-1');
-    expect(rows[0].eligibility).toBe('admins-of-scope');
+    expect(rows[0].approver_rule).toBe('admins-of-scope');
     expect(rows[0].approver_user_id).toBe('telegram:owner');
     expect(rows[0].dedup_key).toBe('sender_admit:mg-chat:tg:stranger');
   });

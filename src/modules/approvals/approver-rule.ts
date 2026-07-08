@@ -1,18 +1,18 @@
 /**
- * Approver eligibility — the one click-authorization rule for every hold.
+ * Approver rules — the one click-authorization rule for every hold.
  *
  * The hold-record contract (guarded-actions phase 1) is carried on the
- * existing tables: a hold has an id, an action, a payload, an eligibility
+ * existing tables: a hold has an id, an action, a payload, an approver
  * rule (who may resolve it), an approver scope (the action's blast radius),
  * a restart policy, and an optional expiry. On `pending_approvals` these map
- * to `approval_id` / `action` / `payload` / (`eligibility` +
+ * to `approval_id` / `action` / `payload` / (`approver_rule` +
  * `approver_user_id` + `agent_group_id`) / `approver_scope` / `expires_at`;
  * the restart policy is derived from the action (`onecli_credential` rows are
  * swept-and-denied on boot, everything else is durable and keeps waiting).
  * `pending_channel_approvals` maps through a synthesized view
  * (channel-approval.ts) — the channel flow keeps its own table.
  *
- * Two eligibility kinds:
+ * Two approver-rule kinds:
  *   - `exclusive` — only the named user may resolve (an a2a message policy's
  *     approver). Nobody else, including owners.
  *   - `admins-of-scope` — the admin chain of the anchoring agent group
@@ -24,18 +24,18 @@
  * The approver-scope overlay is the D1 fix: a hold whose action has global
  * blast radius (e.g. `roles grant`) can only be resolved by an owner or
  * global admin — a scoped admin's click is rejected regardless of the
- * eligibility rule.
+ * approver rule.
  *
  * `mayResolve` replaces the three divergent click-auth copies (approvals
  * response handler, sender handler, channel handler) with one function.
  */
-import type { ApproverEligibility, ApproverScope, PendingApproval } from '../../types.js';
+import type { ApproverRule, ApproverScope, PendingApproval } from '../../types.js';
 import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../permissions/db/user-roles.js';
 
-export type { ApproverEligibility, ApproverScope } from '../../types.js';
+export type { ApproverRule, ApproverScope } from '../../types.js';
 
-/** May `clickerUserId` (namespaced `<channel>:<handle>`) resolve a hold with this eligibility + scope? */
-export function mayResolve(e: ApproverEligibility, scope: ApproverScope, clickerUserId: string | null): boolean {
+/** May `clickerUserId` (namespaced `<channel>:<handle>`) resolve a hold with this approver rule + scope? */
+export function mayResolve(e: ApproverRule, scope: ApproverScope, clickerUserId: string | null): boolean {
   if (!clickerUserId) return false;
 
   const globalScopeOk = scope !== 'global' || isOwner(clickerUserId) || isGlobalAdmin(clickerUserId);
@@ -53,16 +53,16 @@ export function mayResolve(e: ApproverEligibility, scope: ApproverScope, clicker
   return eligible && globalScopeOk;
 }
 
-/** The eligibility rule a `pending_approvals` row encodes. */
-export function eligibilityOf(
-  approval: Pick<PendingApproval, 'eligibility' | 'approver_user_id' | 'agent_group_id'>,
-): ApproverEligibility {
-  if (approval.eligibility === 'exclusive' && approval.approver_user_id) {
+/** The approver rule a `pending_approvals` row encodes. */
+export function approverRuleOf(
+  approval: Pick<PendingApproval, 'approver_rule' | 'approver_user_id' | 'agent_group_id'>,
+): ApproverRule {
+  if (approval.approver_rule === 'exclusive' && approval.approver_user_id) {
     return { kind: 'exclusive', approverUserId: approval.approver_user_id };
   }
   return {
     kind: 'admins-of-scope',
     agentGroupId: approval.agent_group_id,
-    deliveredTo: approval.eligibility === 'exclusive' ? null : approval.approver_user_id,
+    deliveredTo: approval.approver_rule === 'exclusive' ? null : approval.approver_user_id,
   };
 }

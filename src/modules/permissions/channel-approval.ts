@@ -303,7 +303,7 @@ export function channelHoldView(
     title: row.title,
     options_json: row.options_json,
     approver_user_id: row.approver_user_id,
-    eligibility: 'admins-of-scope',
+    approver_rule: 'admins-of-scope',
     approver_scope: 'group',
     dedup_key: null,
   };

@@ -194,7 +194,7 @@ describe('approval-requested callbacks', () => {
     expect(events[0].deliveredTo).toBe('slack:admin-1');
     expect(events[0].session?.id).toBe('sess-1');
     expect(events[0].approval.agent_group_id).toBe('ag-1');
-    expect(events[0].approval.eligibility).toBe('admins-of-scope');
+    expect(events[0].approval.approver_rule).toBe('admins-of-scope');
     // The event carries the live row.
     expect(getPendingApproval(events[0].approval.approval_id)).toBeDefined();
   });

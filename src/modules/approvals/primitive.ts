@@ -269,7 +269,7 @@ export interface RequestApprovalOptions {
    * and the hold anchors to `agentGroupId`.
    */
   session?: Session;
-  /** Eligibility anchor when there is no session. Ignored when `session` is set (its agent group wins). */
+  /** Approver-rule anchor when there is no session. Ignored when `session` is set (its agent group wins). */
   agentGroupId?: string;
   agentName: string;
   /** Free-form action identifier. Must match the key the consumer registered via registerApprovalHandler. */
@@ -282,7 +282,7 @@ export interface RequestApprovalOptions {
   question: string;
   /**
    * Deliver the card to this specific user AND make the hold exclusively
-   * theirs to resolve (eligibility 'exclusive' — an a2a policy's approver).
+   * theirs to resolve (approver rule 'exclusive' — an a2a policy's approver).
    */
   approverUserId?: string;
   /**
@@ -358,7 +358,7 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     title,
     options_json: JSON.stringify(normalizeOptions(cardOptions)),
     approver_user_id: approverUserId ?? (opts.recordDeliveredApprover ? target.userId : null),
-    eligibility: approverUserId ? 'exclusive' : 'admins-of-scope',
+    approver_rule: approverUserId ? 'exclusive' : 'admins-of-scope',
     approver_scope: opts.approverScope ?? 'group',
     dedup_key: dedupKey ?? null,
   });
