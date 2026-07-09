@@ -31,7 +31,7 @@ export interface GuardInput {
   grant?: PendingApproval | null;
 }
 
-declare const unguardedBrand: unique symbol;
+const unguardedBrand = Symbol('unguarded');
 /**
  * A registration that deliberately carries no guard. Omission is not
  * representable — every registry requires either a guard spec or this
@@ -42,7 +42,17 @@ declare const unguardedBrand: unique symbol;
 export type Unguarded = { readonly reason: string; readonly [unguardedBrand]: true };
 
 export function unguarded(reason: string): Unguarded {
-  return Object.freeze({ reason }) as Unguarded;
+  return Object.freeze({ reason, [unguardedBrand]: true as const });
+}
+
+/**
+ * The one runtime discriminator for guard declarations. The brand symbol is
+ * module-private, so `unguarded()` is the only mint — a look-alike
+ * `{ reason }` object (or a guard spec that someday grows a `reason` field)
+ * doesn't pass.
+ */
+export function isUnguarded(decl: object): decl is Unguarded {
+  return unguardedBrand in decl;
 }
 
 export type GuardDecision =

@@ -20,7 +20,7 @@ import {
   markDeliveryFailed,
   migrateDeliveredTable,
 } from './db/session-db.js';
-import { guard, type GuardedAction, type Unguarded } from './guard/index.js';
+import { guard, isUnguarded, type GuardedAction, type Unguarded } from './guard/index.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
@@ -438,7 +438,7 @@ type DeliveryEntry =
 const deliveryActions = new Map<string, DeliveryEntry>();
 
 function isUnguardedEntry(entry: DeliveryEntry): entry is Extract<DeliveryEntry, { guard: Unguarded }> {
-  return 'reason' in entry.guard;
+  return isUnguarded(entry.guard);
 }
 
 export function registerDeliveryAction(action: string, handler: DeliveryActionHandler, unguardedDecl: Unguarded): void;
@@ -455,7 +455,7 @@ export function registerDeliveryAction(
     // skill that wants to extend a guarded action must compose at the
     // module's exported functions instead, or re-register with a guard spec
     // of its own.
-    if ('reason' in guardDecl && !isUnguardedEntry(existing)) {
+    if (isUnguarded(guardDecl) && !isUnguardedEntry(existing)) {
       throw new Error(
         `delivery action "${action}" is guard-wrapped; re-registering it without a guard spec would disarm the guard`,
       );

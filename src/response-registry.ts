@@ -20,7 +20,7 @@
  * unguarded must declare so with `unguarded(<reason>)`, at the registration
  * site, in the diff that adds it.
  */
-import { guard, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
+import { guard, isUnguarded, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
 import { log } from './log.js';
 
 export interface ResponsePayload {
@@ -50,7 +50,7 @@ function responseActor(payload: ResponsePayload): GuardActor {
 }
 
 export function registerResponseHandler(handler: ResponseHandler, guardDecl: ResponseGuardSpec | Unguarded): void {
-  if ('reason' in guardDecl) {
+  if (isUnguarded(guardDecl)) {
     // Explicitly declared unguarded — the carried reason is the reviewable record.
     responseHandlers.push(handler);
     return;

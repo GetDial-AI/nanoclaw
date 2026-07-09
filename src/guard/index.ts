@@ -20,6 +20,7 @@ export {
   ALLOW,
   DENY,
   HOLD,
+  isUnguarded,
   unguarded,
   type GuardActor,
   type GuardDecision,

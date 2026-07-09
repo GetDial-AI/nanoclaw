@@ -20,7 +20,7 @@
 import { getChannelAdapter } from './channels/channel-registry.js';
 import { gateCommand } from './command-gate.js';
 import { getAgentGroup } from './db/agent-groups.js';
-import { guard, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
+import { guard, isUnguarded, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
 import { recordDroppedMessage } from './db/dropped-messages.js';
 import {
   createMessagingGroup,
@@ -145,7 +145,7 @@ export function registerMessageInterceptor(
   fn: MessageInterceptorFn,
   guardDecl: InterceptorGuardSpec | Unguarded,
 ): void {
-  if ('reason' in guardDecl) {
+  if (isUnguarded(guardDecl)) {
     // Explicitly declared unguarded — the carried reason is the reviewable record.
     messageInterceptors.push(fn);
     return;
