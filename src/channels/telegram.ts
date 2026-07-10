@@ -165,7 +165,10 @@ function createPairingInterceptor(
           platform_id: platformId,
           name: consumed.consumed!.name,
           is_group: consumed.consumed!.isGroup ? 1 : 0,
-          unknown_sender_policy: 'strict',
+          // Same context-appropriate default as router auto-create, so a
+          // paired chat behaves like any other telegram messaging group.
+          unknown_sender_policy: (consumed.consumed!.isGroup ? TELEGRAM_DEFAULTS.group : TELEGRAM_DEFAULTS.dm)
+            .unknownSenderPolicy,
           created_at: new Date().toISOString(),
         });
       }

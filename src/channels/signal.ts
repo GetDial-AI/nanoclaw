@@ -288,7 +288,7 @@ interface SignalQuote {
   text?: string;
 }
 
-interface SignalMention {
+export interface SignalMention {
   start?: number;
   length?: number;
   uuid?: string;
@@ -349,6 +349,23 @@ function resolveMentions(text: string, mentions?: SignalMention[]): string {
   }
   result += text.slice(cursor);
   return result;
+}
+
+/**
+ * Platform mention signal for the router: DMs always engage (isMention=true);
+ * a group message counts as a mention only when the linked account itself is
+ * tagged. Returns undefined (not false) otherwise — the router treats
+ * undefined as "no platform signal" (see InboundMessage.isMention in
+ * adapter.ts). Matches both `number` and `uuid` against the configured
+ * account so either identifier shape works.
+ */
+export function computeSignalIsMention(
+  account: string,
+  isGroup: boolean,
+  mentions?: SignalMention[],
+): true | undefined {
+  if (!isGroup) return true;
+  return mentions?.some((m) => m.number === account || m.uuid === account) ? true : undefined;
 }
 
 /**
@@ -573,6 +590,9 @@ export function createSignalAdapter(config: {
             isFromMe: true,
             ...(syncSent.quote ? quoteToContent(syncSent.quote) : {}),
           },
+          // Note-to-self is a DM with ourselves: same DM→mention rule.
+          isMention: true,
+          isGroup: false,
           timestamp,
         };
         await setup.onInbound(platformId, null, msg);
@@ -670,6 +690,8 @@ export function createSignalAdapter(config: {
         ...(attachmentRefs.length > 0 ? { attachments: attachmentRefs } : {}),
         ...(dataMessage.quote ? quoteToContent(dataMessage.quote) : {}),
       },
+      isMention: computeSignalIsMention(config.account, isGroup, dataMessage.mentions),
+      isGroup,
       timestamp,
     };
     await setup.onInbound(platformId, null, msg);
@@ -936,19 +958,17 @@ const DEFAULT_TCP_HOST = '127.0.0.1';
 const DEFAULT_TCP_PORT = 7583;
 
 /**
- * Linked personal account, so auto-create is 'strict'. signal-cli DOES carry
- * group-mention metadata (envelope.dataMessage.mentions), but this adapter
- * does not yet emit top-level isGroup/isMention on InboundMessage — until it
- * does, mention wirings could never fire, so the honest declaration is
- * 'never' with a name-pattern group default.
- * TODO(PR9): once the adapter emits isMention (DM→true, group→
- * dataMessage.mentions matched against config.account) and top-level isGroup,
- * flip this to group { engageMode: 'mention' } + mentions: 'platform'.
+ * Linked personal account, so auto-create is 'strict'. The adapter emits
+ * top-level isGroup and isMention (DM→true; group→dataMessage.mentions
+ * matched against config.account via computeSignalIsMention), so platform
+ * mention wirings can fire. Group default is 'mention', never 'mention-sticky':
+ * Signal is non-threaded and sessions are never deleted, so sticky in the
+ * single shared session would mean engaged-forever.
  */
 const SIGNAL_DEFAULTS: ChannelDefaults = {
   dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'strict' },
-  group: { engageMode: 'pattern', engagePattern: '\\b{name}\\b', threads: false, unknownSenderPolicy: 'strict' },
-  mentions: 'never',
+  group: { engageMode: 'mention', threads: false, unknownSenderPolicy: 'strict' },
+  mentions: 'platform',
 };
 
 registerChannelAdapter('signal', {

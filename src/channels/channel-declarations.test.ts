@@ -57,11 +57,13 @@ const EXPECTED: Record<
   // so the shared-number declaration applies. (Dedicated mode is covered by
   // the adapter's own tests once PR8 lands the behavior split.)
   whatsapp: { groupMode: 'pattern', groupThreads: false, mentions: 'never' },
-  // signal/wechat: interim 'never' declarations until the adapters emit
-  // top-level isGroup/isMention (see TODO(PR9) in each module).
-  signal: { groupMode: 'pattern', groupThreads: false, mentions: 'never' },
+  // signal emits top-level isGroup/isMention (DM→true, group→account tagged);
+  // non-threaded, so group mode is 'mention', never sticky.
+  signal: { groupMode: 'mention', groupThreads: false, mentions: 'platform' },
   emacs: { groupMode: 'pattern', groupThreads: false, mentions: 'never' },
-  wechat: { groupMode: 'pattern', groupThreads: false, mentions: 'never' },
+  // wechat emits isMention only for DMs (shared account, no group-mention
+  // metadata), so mention wirings are dm-only and groups stay name-pattern.
+  wechat: { groupMode: 'pattern', groupThreads: false, mentions: 'dm-only' },
 };
 
 describe('channel default declarations', () => {

@@ -77,17 +77,15 @@ function messageText(msg: OutboundMessage): string {
 
 /**
  * Shared personal account (iLink bot rides the operator's own WeChat), so
- * auto-create is 'strict' and groups engage on the agent's name. The adapter
- * does not yet emit top-level isGroup/isMention on InboundMessage (they only
- * exist inside content today), so the honest declaration is 'never'.
- * TODO(PR9): once the adapter hoists isGroup to top level and sets
- * isMention=true for DMs, flip mentions to 'dm-only' (group stays
- * name-pattern — WeChat group tags address the human on a shared account).
+ * auto-create is 'strict' and groups engage on the agent's name — group tags
+ * address the human, and iLink exposes no bot-mention metadata anyway. The
+ * adapter emits top-level isGroup and isMention=true for DMs, so mention
+ * wirings can fire only there: 'dm-only'.
  */
 const WECHAT_DEFAULTS: ChannelDefaults = {
   dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'strict' },
   group: { engageMode: 'pattern', engagePattern: '\\b{name}\\b', threads: false, unknownSenderPolicy: 'strict' },
-  mentions: 'never',
+  mentions: 'dm-only',
 };
 
 registerChannelAdapter('wechat', {
@@ -162,6 +160,11 @@ registerChannelAdapter('wechat', {
           senderName: msg.from_user_id,
           isGroup,
         },
+        // iLink exposes no bot-mention metadata (shared personal account), so
+        // only DMs carry the platform mention signal; group messages leave
+        // isMention undefined and rely on the name-pattern default.
+        ...(isGroup ? {} : { isMention: true as const }),
+        isGroup,
         timestamp: new Date(msg.create_time_ms ?? Date.now()).toISOString(),
       };
 
