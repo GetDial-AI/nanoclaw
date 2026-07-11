@@ -33,11 +33,12 @@ export interface GuardInput {
 
 const unguardedBrand = Symbol('unguarded');
 /**
- * A registration that deliberately carries no guard. Omission is not
- * representable — every registry requires either a guard spec or this
- * marker, so the decision to run unguarded is visible, and justified, in
- * the diff that registers the handler. The reason travels with the
- * registration; `grep "unguarded("` is the complete inventory.
+ * A registration that deliberately carries no guard. Where a registry takes
+ * a declaration (delivery actions), omission is not representable —
+ * registration requires either a guard spec or this marker, so the decision
+ * to run unguarded is visible, and justified, in the diff that registers
+ * the handler. The reason travels with the registration;
+ * `grep "unguarded("` is the complete inventory.
  */
 export type Unguarded = { readonly reason: string; readonly [unguardedBrand]: true };
 

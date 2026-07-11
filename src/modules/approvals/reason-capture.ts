@@ -20,7 +20,6 @@
  */
 import type { InboundEvent } from '../../channels/adapter.js';
 import { getDeliveryAdapter } from '../../delivery.js';
-import { unguarded } from '../../guard/index.js';
 import {
   deletePendingApproval,
   getExpiredAwaitingReasonApprovals,
@@ -152,10 +151,7 @@ export async function captureReasonReply(event: InboundEvent): Promise<boolean> 
   return true;
 }
 
-registerMessageInterceptor(
-  captureReasonReply,
-  unguarded('self-authorizing — only captures a DM from the admin whose reject click armed it (keyed by userId + DM)'),
-);
+registerMessageInterceptor(captureReasonReply);
 
 /**
  * Host-sweep finalizer: any reject-with-reason hold whose window elapsed (admin

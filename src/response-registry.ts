@@ -7,21 +7,10 @@
  * which triggers module registrations that would otherwise happen before
  * index.ts's own const initializers have run.
  *
- * Keep this file dependency-free (log.js and the guard leaf are fine, but
- * nothing from modules/* or index.ts itself). Any file imported here must
- * not in turn import from src/index.ts, or the cycle returns.
- *
- * A handler whose click performs a privileged operation registers with a
- * guard spec: the registry wraps it so the guard's decision stands between
- * the click and the handler, and the wrapped path is the only path. `claims`
- * is the handler's own claim test (does this questionId belong to me?) so an
- * unauthorized click is claimed-and-dropped without stealing other handlers'
- * responses. The guard argument is not optional — a handler that runs
- * unguarded must declare so with `unguarded(<reason>)`, at the registration
- * site, in the diff that adds it.
+ * Keep this file dependency-free (log.js is fine, but nothing from
+ * modules/* or index.ts itself). Any file imported here must not in turn
+ * import from src/index.ts, or the cycle returns.
  */
-import { guard, isUnguarded, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
-import { log } from './log.js';
 
 export interface ResponsePayload {
   questionId: string;
@@ -34,46 +23,10 @@ export interface ResponsePayload {
 
 export type ResponseHandler = (payload: ResponsePayload) => Promise<boolean>;
 
-export interface ResponseGuardSpec {
-  /** Guard action consulted before the handler runs — the defined value, not a name. */
-  action: GuardedAction;
-  /** Would this handler claim the response? (Its own row lookup.) */
-  claims: (payload: ResponsePayload) => boolean;
-}
-
 const responseHandlers: ResponseHandler[] = [];
 
-function responseActor(payload: ResponsePayload): GuardActor {
-  if (!payload.userId) return { kind: 'human', userId: '' };
-  const userId = payload.userId.includes(':') ? payload.userId : `${payload.channelType}:${payload.userId}`;
-  return { kind: 'human', userId };
-}
-
-export function registerResponseHandler(handler: ResponseHandler, guardDecl: ResponseGuardSpec | Unguarded): void {
-  if (isUnguarded(guardDecl)) {
-    // Explicitly declared unguarded — the carried reason is the reviewable record.
-    responseHandlers.push(handler);
-    return;
-  }
-  const spec = guardDecl;
-  responseHandlers.push(async (payload) => {
-    if (!spec.claims(payload)) return false;
-    const decision = guard(spec.action, {
-      actor: responseActor(payload),
-      payload: { questionId: payload.questionId, value: payload.value },
-    });
-    if (decision.effect !== 'allow') {
-      // Claim the response so it's not unclaimed-logged, but do nothing.
-      log.warn('Response click rejected by guard', {
-        action: spec.action.action,
-        questionId: payload.questionId,
-        userId: payload.userId,
-        reason: decision.reason,
-      });
-      return true;
-    }
-    return handler(payload);
-  });
+export function registerResponseHandler(handler: ResponseHandler): void {
+  responseHandlers.push(handler);
 }
 
 export function getResponseHandlers(): readonly ResponseHandler[] {

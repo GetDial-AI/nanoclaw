@@ -8,10 +8,10 @@
  *     GuardedAction VALUE returned by defineGuardedAction, so a dropped
  *     module-edge import or a typo'd action is a compile error (and a forged
  *     value is denied at runtime), not a silent allow.
- *   - A handler cannot register unguarded by omission — every registry
- *     (delivery actions, response handlers, interceptors, CLI commands)
- *     requires a guard spec or an explicit unguarded(<reason>) declaration
- *     at the registration site.
+ *   - A privileged handler cannot register unguarded by omission — the
+ *     delivery-action registry requires a guard spec or an explicit
+ *     unguarded(<reason>) declaration, and every ncl command derives its
+ *     guard inside register().
  *
  * What remains is completeness ACROSS registries: a guarded action that
  * holds via `approvalAction` needs a registered approval handler, or an

@@ -20,7 +20,6 @@
 import { getChannelAdapter } from './channels/channel-registry.js';
 import { gateCommand } from './command-gate.js';
 import { getAgentGroup } from './db/agent-groups.js';
-import { guard, isUnguarded, type GuardActor, type GuardedAction, type Unguarded } from './guard/index.js';
 import { recordDroppedMessage } from './db/dropped-messages.js';
 import {
   createMessagingGroup,
@@ -118,53 +117,13 @@ export function setSenderScopeGate(fn: SenderScopeGateFn): void {
  * Used by modules to capture free-text DM replies during multi-step approval
  * flows — the permissions module (agent naming during channel registration)
  * and the approvals module (reject-with-reason capture).
- *
- * An interceptor whose capture performs a privileged operation (the
- * channel-registration name capture creates an agent group + wiring)
- * registers with a guard spec: the registry wraps it so the guard's decision
- * stands between the free-text reply and the handler. `claims` returns the
- * guard consult for events the interceptor would act on (null = not mine,
- * pass through); a deny consumes the message without acting. The guard
- * argument is not optional — an interceptor that runs unguarded must declare
- * so with `unguarded(<reason>)` at the registration site.
  */
 export type MessageInterceptorFn = (event: InboundEvent) => Promise<boolean>;
 
-export interface InterceptorGuardSpec {
-  /** Guard action consulted before the interceptor acts — the defined value, not a name. */
-  action: GuardedAction;
-  /** The guard consult for events this interceptor would act on; null = not mine. */
-  claims: (event: InboundEvent) => { actor: GuardActor; payload: Record<string, unknown> } | null;
-  /** Domain cleanup when the guard denies (e.g. disarm the capture). */
-  onDeny?: (event: InboundEvent) => void;
-}
-
 const messageInterceptors: MessageInterceptorFn[] = [];
 
-export function registerMessageInterceptor(
-  fn: MessageInterceptorFn,
-  guardDecl: InterceptorGuardSpec | Unguarded,
-): void {
-  if (isUnguarded(guardDecl)) {
-    // Explicitly declared unguarded — the carried reason is the reviewable record.
-    messageInterceptors.push(fn);
-    return;
-  }
-  const guardSpec = guardDecl;
-  messageInterceptors.push(async (event) => {
-    const consult = guardSpec.claims(event);
-    if (!consult) return fn(event);
-    const decision = guard(guardSpec.action, { actor: consult.actor, payload: consult.payload });
-    if (decision.effect !== 'allow') {
-      log.warn('Interceptor capture rejected by guard — consuming without acting', {
-        action: guardSpec.action.action,
-        reason: decision.reason,
-      });
-      guardSpec.onDeny?.(event);
-      return true;
-    }
-    return fn(event);
-  });
+export function registerMessageInterceptor(fn: MessageInterceptorFn): void {
+  messageInterceptors.push(fn);
 }
 
 /**

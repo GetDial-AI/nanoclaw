@@ -32,7 +32,7 @@ import { registerResponseHandler, type ResponsePayload } from '../../response-re
 import { getDeliveryAdapter } from '../../delivery.js';
 import { log } from '../../log.js';
 import type { MessagingGroup, MessagingGroupAgent } from '../../types.js';
-import { guard, unguarded } from '../../guard/index.js';
+import { guard } from '../../guard/index.js';
 import { channelsRegister, sendersAdmit } from './guard.js';
 import { canAccessAgentGroup } from './access.js';
 import {
@@ -293,12 +293,7 @@ async function handleSenderApprovalResponse(payload: ResponsePayload): Promise<b
   return true;
 }
 
-registerResponseHandler(
-  handleSenderApprovalResponse,
-  unguarded(
-    'self-authorizing — verifies the clicker inline (delivered approver or group admin) before adding a member',
-  ),
-);
+registerResponseHandler(handleSenderApprovalResponse);
 
 // ── Unknown-channel registration flow ──
 
@@ -324,14 +319,26 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   const row = getPendingChannelApproval(payload.questionId);
   if (!row) return false;
 
-  // Click authorization is the guard's channels.register baseline (./guard.ts),
-  // consulted by the response-registry wrapper before this handler runs.
+  // Click authorization is the guard's channels.register baseline (./guard.ts):
+  // the delivered approver, or an admin of the pending row's anchor agent group.
   const clickerId = payload.userId
     ? payload.userId.includes(':')
       ? payload.userId
       : `${payload.channelType}:${payload.userId}`
     : null;
-  if (!clickerId) return true; // unreachable behind the guard wrapper; fail closed
+  const decision = guard(channelsRegister, {
+    actor: { kind: 'human', userId: clickerId ?? '' },
+    payload: { questionId: payload.questionId },
+  });
+  if (!clickerId || decision.effect !== 'allow') {
+    log.warn('Channel registration click rejected — unauthorized clicker', {
+      messagingGroupId: row.messaging_group_id,
+      clickerId,
+      expectedApprover: row.approver_user_id,
+      reason: decision.reason,
+    });
+    return true;
+  }
   const approverId = clickerId;
 
   // ── Reject / Cancel ──
@@ -521,19 +528,13 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   return true;
 }
 
-registerResponseHandler(handleChannelApprovalResponse, {
-  action: channelsRegister,
-  claims: (payload) => getPendingChannelApproval(payload.questionId) !== undefined,
-});
+registerResponseHandler(handleChannelApprovalResponse);
 
 // ── Free-text name interceptor ──
 // Captures the next DM from an approver who clicked "Create new agent",
-// creates the agent immediately, wires the channel, and replays. The router
-// wraps it with the guard: the free-texter must still be an eligible
-// channel-registration approver at reply time — a privilege revoked between
-// the click and the reply now denies, and the arming is disarmed.
+// creates the agent immediately, wires the channel, and replays.
 
-const captureAgentNameReply = async (event: InboundEvent): Promise<boolean> => {
+registerMessageInterceptor(async (event: InboundEvent): Promise<boolean> => {
   const userId = extractAndUpsertUser(event);
   if (!userId) return false;
 
@@ -641,20 +642,4 @@ const captureAgentNameReply = async (event: InboundEvent): Promise<boolean> => {
     }
   }
   return true;
-};
-
-registerMessageInterceptor(captureAgentNameReply, {
-  action: channelsRegister,
-  claims: (event) => {
-    const userId = extractAndUpsertUser(event);
-    if (!userId) return null;
-    const pending = awaitingNameInput.get(userId);
-    if (!pending) return null;
-    if (event.channelType !== pending.dmChannelType || event.platformId !== pending.dmPlatformId) return null;
-    return { actor: { kind: 'human', userId }, payload: { questionId: pending.channelMgId } };
-  },
-  onDeny: (event) => {
-    const userId = extractAndUpsertUser(event);
-    if (userId) awaitingNameInput.delete(userId);
-  },
 });

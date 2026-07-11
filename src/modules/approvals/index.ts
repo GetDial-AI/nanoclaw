@@ -23,7 +23,6 @@
  * + approval handlers via this module's public API.
  */
 import { onDeliveryAdapterReady } from '../../delivery.js';
-import { unguarded } from '../../guard/index.js';
 import { registerResponseHandler, onShutdown } from '../../response-registry.js';
 import { handleApprovalsResponse } from './response-handler.js';
 import { startOneCLIApprovalHandler, stopOneCLIApprovalHandler } from './onecli-approvals.js';
@@ -35,10 +34,7 @@ export type { ApprovalHandler, ApprovalHandlerContext, RequestApprovalOptions } 
 // loads reason-capture.js, registering its message-interceptor on import.
 export { sweepAwaitingReasonRejects } from './reason-capture.js';
 
-registerResponseHandler(
-  handleApprovalsResponse,
-  unguarded('self-authorizing — resolves each pending_approvals row against its own approver rules before dispatching'),
-);
+registerResponseHandler(handleApprovalsResponse);
 
 onDeliveryAdapterReady((adapter) => {
   startOneCLIApprovalHandler(adapter);

@@ -467,8 +467,8 @@ describe('unknown-channel registration flow', () => {
       if (claimed) break;
     }
 
-    // Owner replies with the agent name in the same DM — the guarded
-    // interceptor allows (still an eligible approver) and creates.
+    // Owner replies with the agent name in the same DM — the interceptor
+    // captures it and creates.
     await routeInbound({
       channelType: 'telegram',
       platformId: 'dm-owner',
@@ -520,7 +520,7 @@ describe('unknown-channel registration flow', () => {
     }
 
     // The registration disappears between the click and the reply (rejected
-    // from another card, group delete cascade, …) — the guard's baseline no
+    // from another card, group delete cascade, …) — the interceptor no
     // longer finds a pending registration, so the reply must not create.
     getDb()
       .prepare('DELETE FROM pending_channel_approvals WHERE messaging_group_id = ?')

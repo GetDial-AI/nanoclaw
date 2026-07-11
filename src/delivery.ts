@@ -402,8 +402,8 @@ async function deliverMessage(
  * (allow / hold / deny), so there is no unguarded route to it. On approve,
  * the continuation re-enters the same entry carrying the approval row as its
  * grant (`reenterGuardedDeliveryAction`), so the structural baseline is
- * re-checked live. Plain actions (scheduling self-actions, the cli_request
- * bridge — its inner commands are guarded at dispatch) register with an
+ * re-checked live. Plain actions (the cli_request bridge — its inner
+ * commands are guarded at dispatch) register with an
  * explicit `unguarded(<reason>)` declaration instead of a spec — omission is
  * not representable, so the decision to run unguarded is visible, and
  * justified, at the registration site.
