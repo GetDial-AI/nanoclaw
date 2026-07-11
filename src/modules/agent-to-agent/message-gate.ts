@@ -20,7 +20,7 @@ export const applyA2aMessageGate: ApprovalHandler = async ({ session, payload, a
 
   // One replay semantics: re-enter the guarded route carrying the approval
   // row as the grant. The policy hold is satisfied, but the structural
-  // baseline runs live — un-wiring the pair between hold and approve now
+  // checks run live — un-wiring the pair between hold and approve now
   // blocks delivery (the throw surfaces via the response handler's
   // "approved, but applying it failed" notify).
   await routeAgentMessage(msg, session, { grant: approval });

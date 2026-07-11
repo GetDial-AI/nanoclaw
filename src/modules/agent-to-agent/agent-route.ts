@@ -242,7 +242,7 @@ export async function routeAgentMessage(
     throw new Error(`agent-to-agent message ${msg.id} is missing a target agent group id`);
   }
 
-  // The a2a.send baseline (guard.ts) carries the checks verbatim in their
+  // The a2a.send decision (guard.ts) carries the checks verbatim in their
   // original order: destination ACL deny, target-exists deny, self-send
   // allow, agent_message_policies hold. An approved replay carries the
   // grant — the hold is satisfied but the structure is re-checked live, so

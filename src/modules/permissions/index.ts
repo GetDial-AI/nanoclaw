@@ -131,7 +131,7 @@ function handleUnknownSender(
     agent_group_id: agentGroupId,
   };
 
-  // The admission decision is the guard's senders.admit baseline (./guard.ts)
+  // The admission decision is the guard's senders.admit decision (./guard.ts)
   // — unknown_sender_policy verbatim: strict → deny, request_approval → hold,
   // public → allow (short-circuited before the gate). Drop-recording and the
   // hold creation stay here.
@@ -319,7 +319,7 @@ async function handleChannelApprovalResponse(payload: ResponsePayload): Promise<
   const row = getPendingChannelApproval(payload.questionId);
   if (!row) return false;
 
-  // Click authorization is the guard's channels.register baseline (./guard.ts):
+  // Click authorization is the guard's channels.register decision (./guard.ts):
   // the delivered approver, or an admin of the pending row's anchor agent group.
   const clickerId = payload.userId
     ? payload.userId.includes(':')

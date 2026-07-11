@@ -3,7 +3,7 @@
  *
  * The delivery registry's guard wrapper runs these only on `allow` — which,
  * for self-mod, means an approved replay carrying a valid grant (the
- * baseline holds unconditionally from the container path; see ./guard.ts).
+ * decision holds unconditionally from the container path; see ./guard.ts).
  * Each body mutates the container config in the DB, rebuilds/kills the
  * container as needed, and writes an on_wake message so the fresh container
  * picks up where the old one left off.

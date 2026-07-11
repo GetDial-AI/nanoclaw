@@ -1,11 +1,11 @@
 /**
  * CLI guard adapter — the command registry's catalog derivation and
- * structural baseline, moved verbatim out of dispatch.ts (guarded-actions
+ * structural decision, moved verbatim out of dispatch.ts (guarded-actions
  * phase 2). Declaration is registration: registry.register() derives one
  * catalog entry per command from the CommandDef itself; no second file is
  * edited when a command is added.
  *
- * The baseline carries today's decisions exactly:
+ * The decide fn carries today's decisions exactly:
  *   host caller → allow (the 0600 socket is the auth story — in code,
  *   unremovable by data);
  *   cli_scope 'disabled' → deny; 'group' → resource allowlist, cross-group
@@ -28,9 +28,9 @@ export function commandGuardAction(cmd: Pick<CommandDef, 'name' | 'action'>): st
 export function commandGuardSpec(cmd: CommandDef): GuardedActionSpec {
   return {
     action: commandGuardAction(cmd),
-    approvalAction: cmd.access === 'approval' ? 'cli_command' : undefined,
+    grantActionName: cmd.access === 'approval' ? 'cli_command' : undefined,
     // Bind a cli_command grant to the exact command it was approved for.
-    grantMatches: (grant) => {
+    grantCoversRequest: (grant) => {
       try {
         const payload = JSON.parse(grant.payload) as { frame?: { command?: string } };
         return payload.frame?.command === cmd.name;
@@ -38,11 +38,11 @@ export function commandGuardSpec(cmd: CommandDef): GuardedActionSpec {
         return false;
       }
     },
-    baseline: (input) => commandBaseline(cmd, input),
+    decide: (input) => commandDecide(cmd, input),
   };
 }
 
-function commandBaseline(cmd: CommandDef, input: GuardInput) {
+function commandDecide(cmd: CommandDef, input: GuardInput) {
   const { actor } = input;
   if (actor.kind === 'host') return ALLOW('host caller (trusted socket)');
   if (actor.kind !== 'agent') return DENY('CLI commands accept host or agent callers only.');

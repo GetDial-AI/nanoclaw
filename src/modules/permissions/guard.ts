@@ -7,7 +7,7 @@
  * anyway), `request_approval` holds, `strict` denies. The hold is executed by
  * the caller through the module's own pending_sender_approvals flow (card,
  * in-flight dedup) — not the approvals primitive — so this entry has no
- * approvalAction: the approve continuation adds the member and replays
+ * grantActionName: the approve continuation adds the member and replays
  * routeInbound, which then passes the gate structurally via membership, no
  * grant needed.
  *
@@ -24,7 +24,7 @@ import { hasAdminPrivilege } from './db/user-roles.js';
 
 export const sendersAdmit = defineGuardedAction({
   action: 'senders.admit',
-  baseline: (input) => {
+  decide: (input) => {
     const policy = input.payload.policy;
     if (policy === 'public') return ALLOW('public messaging group');
     if (policy === 'request_approval') {
@@ -38,7 +38,7 @@ export const sendersAdmit = defineGuardedAction({
 
 export const channelsRegister = defineGuardedAction({
   action: 'channels.register',
-  baseline: (input) => {
+  decide: (input) => {
     if (input.actor.kind !== 'human') return DENY('channel registration resolves via human clicks/replies');
     const questionId = typeof input.payload.questionId === 'string' ? input.payload.questionId : '';
     const row = getPendingChannelApproval(questionId);

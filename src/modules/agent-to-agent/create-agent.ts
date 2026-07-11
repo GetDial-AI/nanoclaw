@@ -7,7 +7,7 @@
  * barred from. The container's MCP tool gate is inside the (untrusted)
  * container and is trivially bypassed by writing the outbound system row
  * directly, so authorization MUST be enforced host-side: the delivery
- * registry wraps this action with the guard, whose `agents.create` baseline
+ * registry wraps this action with the guard, whose `agents.create` decision
  * (./guard.ts) is the old cli_scope branch verbatim — trusted global-scope
  * groups allow, everything else (including unknown config, fail-closed)
  * holds for admin approval. On approve the continuation re-enters the

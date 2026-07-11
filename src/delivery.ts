@@ -20,7 +20,8 @@ import {
   markDeliveryFailed,
   migrateDeliveredTable,
 } from './db/session-db.js';
-import { guard, isUnguarded, type GuardedAction, type Unguarded } from './guard/index.js';
+import { runGuarded, type DeliveryGuardSpec, type GuardedDeliveryHandler } from './delivery-guard.js';
+import { isUnguarded, type Unguarded } from './guard/index.js';
 import { log } from './log.js';
 import { normalizeOptions } from './channels/ask-question.js';
 import { clearOutbox, openInboundDb, openOutboundDb, readOutboxFiles } from './session-manager.js';
@@ -401,8 +402,8 @@ async function deliverMessage(
  * — dispatch, approved replay, test lookup — goes through the guard consult
  * (allow / hold / deny), so there is no unguarded route to it. On approve,
  * the continuation re-enters the same entry carrying the approval row as its
- * grant (`reenterGuardedDeliveryAction`), so the structural baseline is
- * re-checked live. Plain actions (the cli_request bridge — its inner
+ * grant (`reenterGuardedDeliveryAction`), so the structural checks are
+ * re-run live. Plain actions (the cli_request bridge — its inner
  * commands are guarded at dispatch) register with an
  * explicit `unguarded(<reason>)` declaration instead of a spec — omission is
  * not representable, so the decision to run unguarded is visible, and
@@ -413,23 +414,6 @@ export type DeliveryActionHandler = (
   session: Session,
   inDb: Database.Database,
 ) => Promise<void>;
-
-/** Handler shape for guard-wrapped actions — must not touch inDb (replays run without one). */
-export type GuardedDeliveryHandler = (content: Record<string, unknown>, session: Session) => Promise<void>;
-
-export interface DeliveryGuardSpec {
-  /** Guard action consulted before the handler runs — the defined value, not a name. */
-  guardAction: GuardedAction;
-  /**
-   * Domain validation that runs before the guard — malformed requests are
-   * answered (notify) without ever creating a hold. Return false to stop.
-   */
-  precheck?: (content: Record<string, unknown>, session: Session) => boolean | Promise<boolean>;
-  /** Create the hold (the domain's requestApproval call — card text lives with the domain). */
-  requestHold: (content: Record<string, unknown>, session: Session) => Promise<void>;
-  /** Tell the requester about a deny. */
-  onDeny?: (content: Record<string, unknown>, session: Session, reason: string) => void;
-}
 
 type DeliveryEntry =
   | { guard: Unguarded; handler: DeliveryActionHandler }
@@ -467,38 +451,10 @@ export function registerDeliveryAction(
   deliveryActions.set(action, { guard: guardDecl, handler } as DeliveryEntry);
 }
 
-async function runGuarded(
-  action: string,
-  entry: Extract<DeliveryEntry, { guard: DeliveryGuardSpec }>,
-  content: Record<string, unknown>,
-  session: Session,
-  grant: PendingApproval | null,
-): Promise<void> {
-  const spec = entry.guard;
-  if (spec.precheck && !(await spec.precheck(content, session))) return;
-
-  const decision = guard(spec.guardAction, {
-    actor: { kind: 'agent', agentGroupId: session.agent_group_id, sessionId: session.id },
-    payload: content,
-    grant,
-  });
-
-  if (decision.effect === 'deny') {
-    log.warn('Delivery action denied by guard', { action, reason: decision.reason });
-    spec.onDeny?.(content, session, decision.reason);
-    return;
-  }
-  if (decision.effect === 'hold') {
-    await spec.requestHold(content, session);
-    return;
-  }
-  await entry.handler(content, session);
-}
-
 /**
  * Approve continuation for a guard-wrapped delivery action: re-enter the
  * entry with the approval row as the grant. The guard treats the grant as
- * hold-satisfied but re-runs the structural baseline, so approve-then-revoke
+ * hold-satisfied but re-runs the structural checks, so approve-then-revoke
  * does not execute. Domains register this as their approval handler in the
  * same line that registers the action.
  */
@@ -509,7 +465,7 @@ export function reenterGuardedDeliveryAction(action: string) {
       log.warn('Approved replay for an action that is not guard-wrapped — dropping', { action });
       return;
     }
-    await runGuarded(action, entry, ctx.payload, ctx.session, ctx.approval);
+    await runGuarded(action, entry.guard, entry.handler, ctx.payload, ctx.session, ctx.approval);
   };
 }
 
@@ -522,7 +478,7 @@ export function getDeliveryAction(action: string): DeliveryActionHandler | undef
   const entry = deliveryActions.get(action);
   if (!entry) return undefined;
   if (isUnguardedEntry(entry)) return entry.handler;
-  return (content, session) => runGuarded(action, entry, content, session, null);
+  return (content, session) => runGuarded(action, entry.guard, entry.handler, content, session, null);
 }
 
 /**

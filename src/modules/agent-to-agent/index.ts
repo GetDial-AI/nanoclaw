@@ -3,7 +3,7 @@
  *
  * Registers its guard-catalog entries (./guard.js) and one guard-wrapped
  * delivery action (`create_agent`) — `create_agent` writes central-DB state,
- * so the guard's agents.create baseline holds confined (non-global) groups
+ * so the guard's agents.create decision holds confined (non-global) groups
  * for admin approval while trusted global-scope groups create directly; the
  * approval handler re-enters the wrapped action carrying the approval row as
  * its grant. The sibling `channel_type === 'agent'` routing path is NOT a

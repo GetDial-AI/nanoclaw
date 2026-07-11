@@ -18,7 +18,7 @@
  *         by the next container start.
  *   - Two approval handlers that re-enter the wrapped actions with the
  *     approval row as the grant (one replay semantics — the guard re-checks
- *     the structural baseline live).
+ *     the structural checks live).
  *
  * Without this module: the MCP tools in the container still write outbound
  * system messages with these actions, but delivery logs "Unknown system

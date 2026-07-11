@@ -44,7 +44,7 @@ describe('delivery action registry', () => {
   it('refuses to replace a guard-wrapped action with an unguarded handler', () => {
     const guardAction = defineGuardedAction({
       action: 'test.guarded-overwrite',
-      baseline: () => HOLD('t'),
+      decide: () => HOLD('t'),
     });
     registerDeliveryAction('test_guarded_overwrite', async () => {}, {
       guardAction,

@@ -1,15 +1,15 @@
 /**
- * Guard conformance — the boot invariant, checked with the real registries.
+ * Guard conformance — checked with the real registries.
  *
  * The old registry walk is gone: an unmapped consult or an undeclared
  * unguarded registration is now unconstructible — guard() takes the defined
  * GuardedAction value (a dropped module-edge import or typo'd name is a
- * compile error), and every registry requires a guard spec or an explicit
- * unguarded(<reason>) declaration. What's left to verify structurally is the
+ * compile error), and the keyed registries require a guard spec or an
+ * explicit unguarded(<reason>) declaration. What's left to verify is the
  * cross-registry pairing the compiler can't see: every holding action has a
- * registered approve continuation. The check runs here in CI and at every
- * boot (enforceGuardConformance refuses to start) — CI can't see
- * skill-installed registrations, the boot check can.
+ * registered approve continuation. (At runtime a missing continuation is
+ * handled loudly at click time — the requester is told no handler is
+ * installed; this test keeps the tree from shipping that state.)
  */
 import { describe, expect, it } from 'vitest';
 
@@ -20,21 +20,16 @@ import '../cli/delivery-action.js';
 import '../cli/dispatch.js'; // registers the cli_command approval handler
 
 import { commandGuard, listCommands } from '../cli/registry.js';
-import { grantContinuationGaps } from '../guard-conformance.js';
 import { getApprovalHandler } from '../modules/approvals/primitive.js';
 import { defineGuardedAction, listGuardedActions } from './guard-actions.js';
 import { HOLD } from './types.js';
 
 describe('guard conformance', () => {
-  it('the grant-continuation check (shared with the boot check) reports zero gaps', () => {
-    expect(grantContinuationGaps()).toEqual([]);
-  });
-
   it('every holding action pairs with a registered approval handler', () => {
-    const holding = listGuardedActions().filter((spec) => spec.approvalAction);
+    const holding = listGuardedActions().filter((spec) => spec.grantActionName);
     expect(holding.length).toBeGreaterThan(0);
 
-    const dangling = holding.filter((spec) => !getApprovalHandler(spec.approvalAction as string));
+    const dangling = holding.filter((spec) => !getApprovalHandler(spec.grantActionName as string));
     expect(dangling.map((s) => s.action)).toEqual([]);
   });
 
@@ -42,7 +37,7 @@ describe('guard conformance', () => {
     const mutating = listCommands().filter((cmd) => cmd.access === 'approval');
     expect(mutating.length).toBeGreaterThan(0);
 
-    const wrong = mutating.filter((cmd) => commandGuard(cmd.name).approvalAction !== 'cli_command');
+    const wrong = mutating.filter((cmd) => commandGuard(cmd.name).grantActionName !== 'cli_command');
     expect(wrong.map((c) => c.name)).toEqual([]);
   });
 
@@ -61,24 +56,9 @@ describe('guard conformance', () => {
   });
 
   it('defining the same action twice throws — names are the catalog key', () => {
-    defineGuardedAction({ action: 'test.dup-define', baseline: () => HOLD('x') });
-    expect(() => defineGuardedAction({ action: 'test.dup-define', baseline: () => HOLD('x') })).toThrow(
+    defineGuardedAction({ action: 'test.dup-define', decide: () => HOLD('x') });
+    expect(() => defineGuardedAction({ action: 'test.dup-define', decide: () => HOLD('x') })).toThrow(
       /already defined/,
     );
-  });
-
-  // KEEP LAST: defines a holding action with no continuation into the shared
-  // per-worker catalog, so every gap check after this point sees it.
-  it('the check names a holding action with no approve continuation (what boot refuses on)', () => {
-    defineGuardedAction({
-      action: 'test.dangling-hold',
-      approvalAction: 'test_dangling_hold_approved',
-      baseline: () => HOLD('always'),
-    });
-
-    const gaps = grantContinuationGaps();
-    expect(gaps).toHaveLength(1);
-    expect(gaps[0]).toContain('test.dangling-hold');
-    expect(gaps[0]).toContain('no approval handler');
   });
 });

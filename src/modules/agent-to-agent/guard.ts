@@ -32,16 +32,16 @@ export const A2A_MESSAGE_GATE_ACTION = 'a2a_message_gate';
 
 export const agentsCreate = defineGuardedAction({
   action: 'agents.create',
-  approvalAction: 'create_agent',
+  grantActionName: 'create_agent',
   // Bind a create_agent grant to the name that was approved.
-  grantMatches: (grant, input) => {
+  grantCoversRequest: (grant, input) => {
     try {
       return (JSON.parse(grant.payload) as { name?: string }).name === input.payload.name;
     } catch {
       return false;
     }
   },
-  baseline: (input) => {
+  decide: (input) => {
     if (input.actor.kind !== 'agent') return DENY('create_agent is a container-originated action.');
     const cliScope = getContainerConfig(input.actor.agentGroupId)?.cli_scope ?? 'group';
     if (cliScope === 'global') {
@@ -58,16 +58,16 @@ export const agentsCreate = defineGuardedAction({
 
 export const a2aSend = defineGuardedAction({
   action: 'a2a.send',
-  approvalAction: A2A_MESSAGE_GATE_ACTION,
+  grantActionName: A2A_MESSAGE_GATE_ACTION,
   // Bind an a2a grant to the exact held message target.
-  grantMatches: (grant, input) => {
+  grantCoversRequest: (grant, input) => {
     try {
       return (JSON.parse(grant.payload) as { platform_id?: string }).platform_id === input.resource?.to;
     } catch {
       return false;
     }
   },
-  baseline: (input) => {
+  decide: (input) => {
     if (input.actor.kind !== 'agent') return DENY('agent-to-agent send requires an agent actor');
     const from = input.actor.agentGroupId;
     const to = input.resource?.to ?? '';

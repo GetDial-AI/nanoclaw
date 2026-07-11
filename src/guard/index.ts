@@ -6,7 +6,7 @@
  * (guard-actions.ts). Consults carry the GuardedAction value returned by
  * defineGuardedAction — never a name to look up — so mis-wiring is a build
  * error, not a runtime fail-open.
- * Domain-free leaf: domain baselines are defined at the domain modules' edges.
+ * Domain-free leaf: domain decisions are defined at the domain modules' edges.
  */
 export { guard } from './guard.js';
 export {

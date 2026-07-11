@@ -3,7 +3,7 @@
  *
  * The guard is a domain-free leaf: this module may import the DB read layer,
  * config, log, and shared types — never src/cli/* or src/modules/*. Domain
- * knowledge (what an action's structural baseline checks) arrives via
+ * knowledge (what an action's decide fn checks) arrives via
  * definition: domain modules call defineGuardedAction (guard-actions.ts) at
  * their module edges and pass the returned value to every consult and
  * registration site — the wiring is a symbol reference the compiler checks.
@@ -26,7 +26,7 @@ export interface GuardInput {
   /**
    * Verified approval row carried by an approved replay. A valid grant
    * satisfies a hold (the human already decided) but never a deny — the
-   * structural baseline is re-checked live on every replay.
+   * structural checks re-run live on every replay.
    */
   grant?: PendingApproval | null;
 }

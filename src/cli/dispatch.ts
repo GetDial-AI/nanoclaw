@@ -9,7 +9,7 @@
  * auto-fill, the sessions-get existence oracle, `--help` interception,
  * parseArgs, and post-handler row filtering. An approved replay re-enters
  * here carrying the verified approval row as its grant — the guard re-checks
- * the structural baseline live, and the `approved: true` boolean no longer
+ * the structural checks live, and the `approved: true` boolean no longer
  * exists.
  */
 import { getContainerConfig } from '../db/container-configs.js';
@@ -69,7 +69,7 @@ export async function dispatch(
   }
 
   // Group-scope mechanics for agent callers (visibility, not policy — the
-  // allow/hold/deny decisions live in the guard baseline, cli/guard.ts).
+  // allow/hold/deny decisions live in the guard decision, cli/guard.ts).
   if (ctx.caller === 'agent') {
     const configRow = getContainerConfig(ctx.agentGroupId);
     const cliScope = configRow?.cli_scope ?? 'group';

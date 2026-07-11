@@ -3,7 +3,7 @@
  *
  * Regression guard for the audit finding: `create_agent` is a privileged
  * central-DB write with no host-side authz. Authorization is the guard's
- * `agents.create` baseline — trusted owner agent groups ('global') create
+ * `agents.create` decision — trusted owner agent groups ('global') create
  * directly; confined groups ('group', the default and the prompt-injection
  * victim) hold for admin approval. These tests drive the REAL wrapped
  * delivery action (the only reachable path) and the approve continuation's
@@ -208,7 +208,7 @@ describe('create_agent — guard-based authorization (wrapped delivery action)',
 });
 
 describe('create_agent — approved replay (grant-carrying re-entry)', () => {
-  it('valid grant executes exactly once — baseline hold is satisfied, create runs', async () => {
+  it('valid grant executes exactly once — decide hold is satisfied, create runs', async () => {
     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
     const payload = { name: 'Scout', instructions: 'help' };
     const approval = liveGrant('appr-ca-1', payload);
