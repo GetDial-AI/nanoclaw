@@ -1,7 +1,7 @@
 /**
  * CLI guard adapter — the command registry's catalog derivation and
- * structural decision, moved verbatim out of dispatch.ts (guarded-actions
- * phase 2). Declaration is registration: registry.register() derives one
+ * structural decision, moved verbatim out of dispatch.ts.
+ * Declaration is registration: registry.register() derives one
  * catalog entry per command from the CommandDef itself; no second file is
  * edited when a command is added.
  *

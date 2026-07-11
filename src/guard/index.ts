@@ -1,9 +1,8 @@
 /**
- * Guard — the privileged-action decision seam (guarded-actions phase 2).
+ * Guard — the privileged-action decision seam.
  *
- * See the guarded-actions decisions doc on the team hub. One decision
- * function (guard.ts) and a definition-derived action catalog
- * (guard-actions.ts). Consults carry the GuardedAction value returned by
+ * One decision function (guard.ts) and a definition-derived action
+ * catalog (guard-actions.ts). Consults carry the GuardedAction value returned by
  * defineGuardedAction — never a name to look up — so mis-wiring is a build
  * error, not a runtime fail-open.
  * Domain-free leaf: domain decisions are defined at the domain modules' edges.

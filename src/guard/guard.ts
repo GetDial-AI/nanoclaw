@@ -7,10 +7,10 @@
  * lookup and no fail-open path for an unknown action: an unwired consult is
  * a compile error, and a value that didn't come from defineGuardedAction is
  * denied at runtime. Policy-as-data (tighten-only rule sources composing
- * with the decision) is deliberately deferred to phase 3 of the
- * guarded-actions design, where the generalized rules table arrives with its
- * first operator-visible consumer; until then the one policy table
- * (agent_message_policies) is consulted inside a2a.send's decide.
+ * with the decision) is deliberately deferred — a generalized rules table
+ * can arrive later, with its first operator-visible consumer; until then
+ * the one policy table (agent_message_policies) is consulted inside
+ * a2a.send's decide.
  *
  * Grants: an approved replay carries the verified approval row. A valid
  * grant (live pending row whose action matches the entry's approval action,
