@@ -19,6 +19,7 @@ import { guard, type GuardActor } from '../guard/index.js';
 import { registerApprovalHandler, requestApproval } from '../modules/approvals/index.js';
 import type { PendingApproval } from '../types.js';
 import type { CallerContext, ErrorCode, RequestFrame, ResponseFrame } from './frame.js';
+import { localizeIsoTimestamps } from './format.js';
 import { getResource } from './crud.js';
 import { listVerbs, renderVerbHelp } from './help-render.js';
 import { commandGuard, listCommands, lookup } from './registry.js';
@@ -220,7 +221,8 @@ registerApprovalHandler('cli_command', async ({ payload, approval, notify }) => 
   const response = await dispatch(frame, callerContext, { grant: approval });
 
   if (response.ok) {
-    const data = typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2);
+    const localized = localizeIsoTimestamps(response.data);
+    const data = typeof localized === 'string' ? localized : JSON.stringify(localized, null, 2);
     notify(`Your \`ncl ${frame.command}\` request was approved and executed.\n\n${data}`);
   } else {
     notify(`Your \`ncl ${frame.command}\` request was approved but failed: ${response.error.message}`);
