@@ -1,5 +1,5 @@
 /**
- * Migration 019 is upgrade-safe: it grandfathers EXISTING groups to their
+ * Migration 020 is upgrade-safe: it grandfathers EXISTING groups to their
  * pre-feature behavior (agent-teams + Workflow on) so an upgrade changes
  * nothing, while groups created after it get the lean column default.
  */
@@ -17,10 +17,10 @@ function group(id: string): void {
   createAgentGroup({ id, name: id, folder: id, agent_provider: null, created_at: now() });
 }
 
-describe('migration 019 (harness-capabilities) upgrade safety', () => {
+describe('migration 020 (harness-capabilities) upgrade safety', () => {
   beforeEach(() => {
     const db = initTestDb();
-    // Run everything EXCEPT 019 to reach the pre-upgrade schema (no column yet).
+    // Run everything EXCEPT 020 to reach the pre-upgrade schema (no column yet).
     runMigrations(
       db,
       migrations.filter((m) => m.name !== 'harness-capabilities'),
@@ -35,7 +35,7 @@ describe('migration 019 (harness-capabilities) upgrade safety', () => {
     group('ag-old');
     db.prepare('INSERT INTO container_configs (agent_group_id, updated_at) VALUES (?, ?)').run('ag-old', now());
 
-    // The upgrade: run migration 019.
+    // The upgrade: run migration 020.
     runMigrations(
       db,
       migrations.filter((m) => m.name === 'harness-capabilities'),
@@ -56,7 +56,7 @@ describe('migration 019 (harness-capabilities) upgrade safety', () => {
   it('grandfathers a legacy group whose config row is created by the post-migration backfill', () => {
     const db = getDb();
     // Startup sequence on a pre-container-configs-era install: the group
-    // exists but has NO container_configs row when migrations run, so 019's
+    // exists but has NO container_configs row when migrations run, so 020's
     // grandfather UPDATE has nothing to touch. The row is created moments
     // later by backfillContainerConfigs() (index.ts boot order: migrations →
     // backfill) — that path must apply the same grandfather rule.

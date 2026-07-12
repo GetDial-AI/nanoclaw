@@ -427,7 +427,8 @@ Several early migrations were later renamed/retired and replaced by "module" fil
 | 16 | `messaging-group-instance` | `016-messaging-group-instance.ts` | `messaging_groups` gets an `instance` column (adapter-instance dimension); table recreate (`disableForeignKeys: true`) backfills `instance = channel_type` on every existing row and relaxes the `UNIQUE` to `(channel_type, platform_id, instance)` |
 | 17 | `agent-message-policies` | `017-agent-message-policies.ts` | `agent_message_policies` (see §1.18) |
 | 18 | `approvals-approver-user-id` | `018-approvals-approver-user-id.ts` | `pending_approvals.approver_user_id` — names a single required approver for a2a message-gate policies |
-| 19 | `harness-capabilities` | `019-harness-capabilities.ts` | `ALTER TABLE container_configs ADD COLUMN harness_capabilities` — per-group harness toggles (see [harness-capabilities.md](harness-capabilities.md)) |
+| 19 | `wiring-threads-override` | `019-wiring-threads.ts` | `ALTER TABLE messaging_group_agents ADD COLUMN threads` — per-wiring thread-policy override (NULL = inherit the adapter declaration) |
+| 20 | `harness-capabilities` | `020-harness-capabilities.ts` | `ALTER TABLE container_configs ADD COLUMN harness_capabilities` — per-group harness toggles (see [harness-capabilities.md](harness-capabilities.md)); grandfathers existing rows to `{"agent-teams":"on","workflow":"on"}` |
 
 Numbers 5 and 6 are intentionally absent — migrations were renumbered during early development.
 

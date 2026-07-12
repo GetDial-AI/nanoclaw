@@ -65,9 +65,9 @@ export function backfillContainerConfigs(): void {
       packages_npm: JSON.stringify(legacy.packages?.npm ?? []),
       additional_mounts: JSON.stringify(legacy.additionalMounts ?? []),
       cli_scope: 'group',
-      // Grandfather, same rule as migration 019: a group reaching this backfill
+      // Grandfather, same rule as migration 020: a group reaching this backfill
       // has no config row, i.e. it pre-dates the capability feature and ran
-      // with teams + Workflow on. Migration 019's UPDATE can't cover it (the
+      // with teams + Workflow on. Migration 020's UPDATE can't cover it (the
       // row doesn't exist yet when migrations run), so stamp the legacy state
       // here — '{}' would silently flip such a group to the lean defaults.
       harness_capabilities: '{"agent-teams":"on","workflow":"on"}',
