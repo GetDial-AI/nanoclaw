@@ -47,6 +47,21 @@ describe('buildContainerArgs ordering invariant (structural)', () => {
   });
 });
 
+describe('harness-capability spawn seam (structural)', () => {
+  // The spawn site is the ONLY place resolved capabilities reach the settings
+  // reconciler — initGroupFilesystem's opt is optional, so dropping it in a
+  // refactor breaks no type and no other test, while every group's
+  // settings.json silently stops converging (agent-teams has no runner-side
+  // backstop). spawnContainer needs a live container runtime to drive, so
+  // guard the seam structurally.
+  it('spawnContainer passes containerConfig.harnessCapabilities to initGroupFilesystem', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
+    expect(src).toMatch(
+      /initGroupFilesystem\(agentGroup, \{[\s\S]*?harnessCapabilities: containerConfig\.harnessCapabilities,[\s\S]*?\}\)/,
+    );
+  });
+});
+
 describe('per-container resource limits (structural)', () => {
   // CONTAINER_CPU_LIMIT / CONTAINER_MEMORY_LIMIT pass through to `docker run` as
   // --cpus / --memory, but only when set. The default is empty string → no flag →

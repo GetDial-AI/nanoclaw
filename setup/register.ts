@@ -17,6 +17,7 @@ import {
   validateEngageAgainstChannel,
 } from '../src/channels/channel-defaults.js';
 import { hasDeclaredChannelDefaults } from '../src/channels/channel-registry.js';
+import { backfillContainerConfigs } from '../src/backfill-container-configs.js';
 import { DATA_DIR } from '../src/config.js';
 import { initDb } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/migrations/index.js';
@@ -184,6 +185,12 @@ export async function run(args: string[]): Promise<void> {
   const dbPath = path.join(DATA_DIR, 'v2.db');
   const db = initDb(dbPath);
   runMigrations(db);
+  // Any process that runs migrations must backfill before creating config
+  // rows: a legacy group without a container_configs row gets its grandfather
+  // stamp from the backfill, and the ensureContainerConfig below would
+  // otherwise claim the row first with the lean defaults (host boot does the
+  // same migrations → backfill sequence in src/index.ts).
+  backfillContainerConfigs();
 
   // 1. Create or find agent group. Provider-agnostic: provider is a DB
   // property set via `ncl groups config update --provider`, not a creation

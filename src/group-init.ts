@@ -151,45 +151,56 @@ function asObject(value: unknown): SettingsObject | null {
  * harness-capability keys to `caps`. A fresh file is composed from
  * DEFAULT_SETTINGS + the capability keys in one atomic write; an existing file
  * is mutated in memory and rewritten only if it changed. Any content that isn't
- * a JSON object (malformed, `null`, a scalar, an array) is left untouched with
- * a warning — settings trouble must never break group init or block a spawn.
+ * a JSON object (malformed, `null`, a scalar, an array) — and any read/write
+ * I/O failure — is a warn-and-skip, never a throw: settings trouble must never
+ * break group init or block a spawn.
  */
 function applyGroupSettings(
   settingsFile: string,
   caps: Record<string, HarnessCapabilityState> | undefined,
   initialized: string[],
 ): void {
-  if (!fs.existsSync(settingsFile)) {
-    const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as SettingsObject;
-    reconcileHarnessKeys(settings, caps);
-    writeAtomic(settingsFile, JSON.stringify(settings, null, 2) + '\n');
-    initialized.push('settings.json');
-    return;
-  }
-
-  let raw: string;
-  let parsed: unknown;
+  // Nothing may escape this function: it runs on the every-spawn path, and a
+  // thrown EISDIR/EACCES/ENOSPC would wedge the group in a wakeContainer
+  // retry-fail loop (the pre-capability code swallowed all errors here). A
+  // group whose settings can't be read or written spawns with whatever state
+  // is on disk — degraded, but alive.
   try {
-    raw = fs.readFileSync(settingsFile, 'utf-8');
-    parsed = JSON.parse(raw);
+    if (!fs.existsSync(settingsFile)) {
+      const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as SettingsObject;
+      reconcileHarnessKeys(settings, caps);
+      writeAtomic(settingsFile, JSON.stringify(settings, null, 2) + '\n');
+      initialized.push('settings.json');
+      return;
+    }
+
+    const raw = fs.readFileSync(settingsFile, 'utf-8');
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      log.warn('settings.json is malformed — leaving it untouched', { settingsFile });
+      return;
+    }
+    const settings = asObject(parsed);
+    if (!settings) {
+      log.warn('settings.json is not a JSON object — leaving it untouched', { settingsFile });
+      return;
+    }
+
+    ensurePreCompactHook(settings);
+    reconcileHarnessKeys(settings, caps);
+
+    const next = JSON.stringify(settings, null, 2) + '\n';
+    if (next === raw) return; // no churn on the every-spawn path
+    writeAtomic(settingsFile, next);
+    initialized.push('settings.json (updated)');
   } catch (err) {
-    if (!(err instanceof SyntaxError)) throw err;
-    log.warn('settings.json is malformed — leaving it untouched', { settingsFile });
-    return;
+    log.warn('settings.json reconcile failed — group spawns with the on-disk state', {
+      settingsFile,
+      err: String(err),
+    });
   }
-  const settings = asObject(parsed);
-  if (!settings) {
-    log.warn('settings.json is not a JSON object — leaving it untouched', { settingsFile });
-    return;
-  }
-
-  ensurePreCompactHook(settings);
-  reconcileHarnessKeys(settings, caps);
-
-  const next = JSON.stringify(settings, null, 2) + '\n';
-  if (next === raw) return; // no churn on the every-spawn path
-  writeAtomic(settingsFile, next);
-  initialized.push('settings.json (updated)');
 }
 
 /** Ensure the PreCompact archiving hook is present, preserving existing hooks. */

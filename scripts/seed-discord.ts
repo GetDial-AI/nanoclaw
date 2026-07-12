@@ -9,6 +9,7 @@ import { DATA_DIR } from '../src/config.js';
 import { initDb } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/migrations/index.js';
 import { createAgentGroup, getAgentGroup } from '../src/db/agent-groups.js';
+import { ensureContainerConfig } from '../src/db/container-configs.js';
 import {
   createMessagingGroup,
   createMessagingGroupAgent,
@@ -35,6 +36,10 @@ if (!getAgentGroup(AGENT_GROUP_ID)) {
 } else {
   console.log('Agent group already exists:', AGENT_GROUP_ID);
 }
+// Provision the config row at creation — a group left without one can't
+// spawn until the next host boot, and the startup backfill would then
+// mis-grandfather this genuinely new group to the pre-capability defaults.
+ensureContainerConfig(AGENT_GROUP_ID);
 
 // Messaging group
 if (!getMessagingGroup(MESSAGING_GROUP_ID)) {

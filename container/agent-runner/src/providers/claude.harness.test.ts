@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'bun:test';
 
-import { SDK_DISALLOWED_TOOLS, buildDisallowedTools, createPreToolUseHook } from './claude.js';
+import { ClaudeProvider, SDK_DISALLOWED_TOOLS, buildDisallowedTools, createPreToolUseHook } from './claude.js';
 
 type LooseHook = (input: unknown) => Promise<Record<string, unknown>>;
 
@@ -34,16 +34,41 @@ describe('buildDisallowedTools', () => {
 });
 
 describe('createPreToolUseHook', () => {
-  it('blocks a listed tool with the nanoclaw-equivalent message', async () => {
+  it('blocks a listed tool, with the redirect in the model-visible fields', async () => {
     const hook = createPreToolUseHook(['Workflow']) as unknown as LooseHook;
     const res = await hook({ tool_name: 'Workflow', tool_input: {} });
     expect(res.decision).toBe('block');
-    expect(String(res.stopReason)).toContain('nanoclaw equivalent');
+    // The CLI feeds `reason` / permissionDecisionReason back to the model on a
+    // deny — stopReason is only surfaced with continue:false (turn-ending).
+    expect(String(res.reason)).toContain('nanoclaw equivalent');
+    const specific = res.hookSpecificOutput as Record<string, unknown>;
+    expect(specific.permissionDecision).toBe('deny');
+    expect(String(specific.permissionDecisionReason)).toContain('nanoclaw equivalent');
   });
 
   it('passes an unlisted tool through', async () => {
     const hook = createPreToolUseHook(['Workflow']) as unknown as LooseHook;
     const res = await hook({ tool_name: 'Bash', tool_input: { timeout: 1000 } });
     expect(res.continue).toBe(true);
+  });
+});
+
+describe('ClaudeProvider instance wiring', () => {
+  // Guards the seam the pure-helper tests can't see: the provider must
+  // actually BUILD its blocklist from the capability map it was constructed
+  // with (a revert to the static SDK_DISALLOWED_TOOLS constant at the query
+  // site would pass every other test in this file).
+  it('builds its disallow list and hook blocklist from the constructor capabilities', async () => {
+    const off = new ClaudeProvider({ harnessCapabilities: { workflow: 'off' } });
+    const on = new ClaudeProvider({ harnessCapabilities: { workflow: 'on' } });
+
+    expect(off['disallowedTools']).toContain('Workflow');
+    expect(on['disallowedTools']).not.toContain('Workflow');
+    expect(on['disallowedTools']).toContain('DesignSync');
+
+    const offHook = off['preToolUseHook'] as unknown as LooseHook;
+    const onHook = on['preToolUseHook'] as unknown as LooseHook;
+    expect((await offHook({ tool_name: 'Workflow', tool_input: {} })).decision).toBe('block');
+    expect((await onHook({ tool_name: 'Workflow', tool_input: {} })).continue).toBe(true);
   });
 });

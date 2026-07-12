@@ -203,9 +203,19 @@ export function createPreToolUseHook(blockedTools: Iterable<string>): HookCallba
     const i = input as { tool_name?: string; tool_input?: Record<string, unknown> };
     const toolName = i.tool_name ?? '';
     if (blocked.has(toolName)) {
+      // `reason` (legacy) / permissionDecisionReason (modern) are what the CLI
+      // feeds back to the model on a PreToolUse deny. `stopReason` would only
+      // surface with `continue:false`, which ends the whole turn — the agent
+      // must instead see the redirect and carry on with nanoclaw's tools.
+      const reason = `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`;
       return {
         decision: 'block',
-        stopReason: `Tool '${toolName}' is not available in this environment — use the nanoclaw equivalent.`,
+        reason,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: reason,
+        },
       } as unknown as ReturnType<HookCallback>;
     }
     // Bash exposes its timeout via the tool_input.timeout field (ms). Any other

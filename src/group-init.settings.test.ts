@@ -129,6 +129,19 @@ describe('reconcileHarnessSettings via initGroupFilesystem', () => {
     expect(vi.mocked(log.warn).mock.calls.some(([msg]) => String(msg).includes('malformed'))).toBe(true);
   });
 
+  it('warns instead of throwing when settings.json is unreadable (EISDIR), so the spawn proceeds', () => {
+    // Regression: a non-SyntaxError I/O failure (path replaced by a directory,
+    // EACCES, EIO) used to propagate out of initGroupFilesystem and wedge the
+    // group in a wakeContainer retry-fail loop. The dir is mounted read-write
+    // into the container, so this state is reachable without operator error.
+    const ag = makeGroup();
+    const file = settingsPath(ag);
+    fs.mkdirSync(file, { recursive: true }); // settings.json IS a directory
+
+    expect(() => initGroupFilesystem(ag, { harnessCapabilities: DEFAULT_CAPS })).not.toThrow();
+    expect(vi.mocked(log.warn).mock.calls.some(([msg]) => String(msg).includes('reconcile failed'))).toBe(true);
+  });
+
   it('does not touch settings.json when no capabilities are passed (non-spawn callers)', () => {
     const ag = makeGroup();
     initGroupFilesystem(ag, { harnessCapabilities: DEFAULT_CAPS });

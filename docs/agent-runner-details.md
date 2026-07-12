@@ -155,7 +155,7 @@ class ClaudeProvider implements AgentProvider {
         // retained because MCP invocation-gating under non-bypass modes is
         // unverified. See sdk-tools-baseline.json + claude.tools.test.ts.
         allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
-        disallowedTools: SDK_DISALLOWED_TOOLS,
+        disallowedTools: this.disallowedTools, // fixed set + capability-driven entries (buildDisallowedTools)
         env: this.env,
         model: this.model,
         effort: this.effort,
@@ -164,7 +164,7 @@ class ClaudeProvider implements AgentProvider {
         settingSources: ['project', 'user', 'local'],
         mcpServers: this.mcpServers,
         hooks: {
-          PreToolUse: [{ hooks: [preToolUseHook] }],
+          PreToolUse: [{ hooks: [this.preToolUseHook] }], // per-instance blocklist from the group's resolved capabilities
           PostToolUse: [{ hooks: [postToolUseHook] }],
           PostToolUseFailure: [{ hooks: [postToolUseHook] }],
           PreCompact: [{ hooks: [createPreCompactHook(this.assistantName)] }],
@@ -198,8 +198,8 @@ SDK message (so the idle timer stays honest) and maps recognized messages to `Pr
 **Claude-specific behavior inside the provider:**
 - `MessageStream` for async iterable input (push-based follow-ups)
 - Resume via the SDK `resume` option keyed on the stored `continuation` (the SDK session ID) — no separate resume-at cursor
-- `TOOL_ALLOWLIST` (Agent, Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Skill, …) — a permission auto-approve list, not an availability filter (moot under `bypassPermissions`; wire-verified, see `claude.tools.test.ts`) — extended at the call site with a `mcp__<server>__*` pattern per registered MCP server; `SDK_DISALLOWED_TOOLS` blocks SDK builtins that collide with NanoClaw's own scheduling/interaction model (CronCreate/Delete/List, ScheduleWakeup, AskUserQuestion, Enter/ExitPlanMode, Enter/ExitWorktree)
-- **PreToolUse hook** records the current tool + its declared timeout to `container_state` (so the host sweep widens its stuck tolerance while a long Bash runs) and, as defense-in-depth, blocks any `SDK_DISALLOWED_TOOLS` call that slips through. It does **not** sanitize bash env vars — there is no such hook.
+- `TOOL_ALLOWLIST` (Agent, Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Skill, …) — a permission auto-approve list, not an availability filter (moot under `bypassPermissions`; wire-verified, see `claude.tools.test.ts`) — extended at the call site with a `mcp__<server>__*` pattern per registered MCP server; the effective disallow list is `buildDisallowedTools(caps)`: the fixed `SDK_DISALLOWED_TOOLS` (CronCreate/Delete/List, ScheduleWakeup, AskUserQuestion, Enter/ExitPlanMode, Enter/ExitWorktree, DesignSync, ReportFindings) plus capability-driven entries — `Workflow` unless the group's resolved `workflow` capability is `on` (see [harness-capabilities.md](harness-capabilities.md)). Schema-stripping via `disallowedTools` is best-effort on the pinned CLI; the PreToolUse hook is the deterministic block
+- **PreToolUse hook** (built per provider instance by `createPreToolUseHook` from the same effective disallow list) records the current tool + its declared timeout to `container_state` (so the host sweep widens its stuck tolerance while a long Bash runs) and, as defense-in-depth, deterministically blocks any disallowed-tool call that slips through, feeding the model a redirect to the nanoclaw equivalent. It does **not** sanitize bash env vars — there is no such hook.
 - **PostToolUse / PostToolUseFailure** hooks clear the in-flight tool
 - **PreCompact** hook archives the transcript to `conversations/` before compaction
 - `maybeRotateContinuation` drops an oversized/aged transcript (default caps 12 MB / 14 days, both operator-overridable) so a cold container isn't killed reloading days of `.jsonl` before the host idle ceiling; `isSessionInvalid` clears a continuation whose transcript is gone
