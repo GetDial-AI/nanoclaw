@@ -159,6 +159,8 @@ function grantRow(frameId: string, command: string): PendingApproval {
     title: 'CLI: groups-gated',
     options_json: '[]',
     approver_user_id: null,
+    approver_rule: 'admins-of-scope',
+    dedup_key: null,
   };
 }
 
@@ -285,7 +287,9 @@ describe('withAudit(dispatch)', () => {
     expect(event).toMatchObject({ outcome: 'pending', correlation_id: null });
   });
 
-  it('records an approved replay as an `approved` event with the grant approval id', async () => {
+  it('records an approved replay as a `success` event carrying the grant approval id', async () => {
+    // The approved/rejected verdict is the approvals.decide event's (approvals.audit.ts);
+    // the replayed command's terminal event is an ordinary success, chained by correlation_id.
     const grant = grantRow('9', 'groups-gated');
     mockGetPendingApproval.mockReturnValue(grant);
 
@@ -295,7 +299,7 @@ describe('withAudit(dispatch)', () => {
     const [event] = events();
     expect(event).toMatchObject({
       action: 'groups.gated',
-      outcome: 'approved',
+      outcome: 'success',
       correlation_id: 'appr-123-abc',
     });
     expect(event.resources).toContainEqual({ type: 'approval', id: 'appr-123-abc' });

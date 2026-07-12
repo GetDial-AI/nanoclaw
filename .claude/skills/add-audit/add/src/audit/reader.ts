@@ -11,7 +11,7 @@ import { AUDIT_ENABLED } from './config.js';
 import { AUDIT_DIR, utcDay } from './store.js';
 import type { AuditEvent, AuditOutcome } from './types.js';
 
-const OUTCOMES: ReadonlySet<string> = new Set(['success', 'failure', 'denied', 'pending', 'approved']);
+const OUTCOMES: ReadonlySet<string> = new Set(['success', 'failure', 'denied', 'pending', 'approved', 'rejected']);
 const DAY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.ndjson$/;
 const DEFAULT_LIMIT = 100;
 

@@ -28,7 +28,7 @@ export interface AuditResource {
   id?: string;
 }
 
-export type AuditOutcome = 'success' | 'failure' | 'denied' | 'pending' | 'approved';
+export type AuditOutcome = 'success' | 'failure' | 'denied' | 'pending' | 'approved' | 'rejected';
 
 /** What emit sites provide. Envelope fields are stamped by emitAuditEvent. */
 export interface AuditEventInput {

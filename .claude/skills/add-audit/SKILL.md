@@ -1,35 +1,51 @@
 ---
 name: add-audit
-description: Add an opt-in local audit log for the ncl command surface — every dispatch outcome on both transports (host socket and container), including scope denials, approval holds, and approved replays, written as SIEM-shaped append-only NDJSON day-files under data/audit/. Read back with `ncl audit list`; plug exporters in via registerAuditHook. Off until AUDIT_ENABLED=true.
+description: Add an opt-in local audit log for the ncl command surface and every host-routed approval — each command's dispatch outcome on both transports (host socket and container, scope denials included), plus each approval's request and decision (approved/rejected, across CLI, self-mod, a2a, sender admission, OneCLI, channel registration), written as SIEM-shaped append-only NDJSON day-files under data/audit/. Read back with `ncl audit list`; plug exporters in via registerAuditHook. Off until AUDIT_ENABLED=true.
 ---
 
-# /add-audit — Local Audit Log (ncl surface)
+# /add-audit — Local Audit Log (ncl surface + approvals)
 
-Records one canonical audit event for every command that reaches the `ncl`
-dispatcher — human over the host socket or agent over the container transport
-— including denials. Both transports converge on the exported `dispatch`, so
-one composition covers the whole surface: there is no second door.
+Records one canonical audit event for two surfaces:
+
+1. **Every `ncl` command** — human over the host socket or agent over the
+   container transport, denials included. Both transports converge on the
+   exported `dispatch`, so one composition covers the whole surface: no second
+   door.
+2. **Every host-routed approval** — its `pending` request and its
+   `approvals.decide` decision (approved / rejected), whichever stack gated it:
+   CLI commands, self-mod (`install_packages` / `add_mcp_server`), a2a
+   create-agent and message-gate, unknown-sender admission, OneCLI credential
+   holds, and channel registration. Two lifecycle observers cover them all with
+   zero touch points inside the approval flows.
 
 ```
 ncl (host socket) ──┐
-                    ├─→ dispatch = withAudit(dispatchInner) ─→ one NDJSON line
-container cli_request ┘        │                               data/audit/<UTC-day>.ndjson
-approved replay (grant) ───────┘
+                    ├─→ dispatch = withAudit(dispatchInner) ─→┐
+container cli_request ┘        │                              │
+approved replay (grant) ───────┘                              ├─→ one NDJSON line
+                                                              │   data/audit/<UTC-day>.ndjson
+every hold ─→ requested observer ─→ pending ─────────────────┤
+every resolution ─→ resolved observer ─→ approvals.decide ───┘
 ```
 
-What one event carries: `actor` (`host:<os-user>` or the agent group),
-`origin` (transport, session, channel), dotted `action` from the guard
-catalog (e.g. `groups.config.add-mcp-server`), touched/attempted `resources`,
-`outcome` (`success · failure · denied · pending · approved`), `correlation_id`
-(the approval id on gated chains — the pending event and the approved replay
-share it, so `--correlation <id>` returns the whole chain), and `details` (the
-flag names passed, plus a small allowlist of safe enum values — never raw
-argument values).
+What one event carries: `actor` (`host:<os-user>`, the agent group, a
+`<channel>:<handle>` admin for a decision, or `system` for an expiry/sweep),
+`origin` (transport, session, channel), dotted `action` from the guard catalog
+(e.g. `groups.config.add-mcp-server`, `agents.create`, `approvals.decide`),
+touched/attempted `resources` (a gated chain names its `approval` and, on the
+`pending` event, the picked approver as a `user`), `outcome` (`success ·
+failure · denied · pending · approved · rejected`), `correlation_id` (the
+approval id on gated chains — the `pending` request, the `approvals.decide`
+decision, and a CLI replay's terminal event all share it, so `--correlation
+<id>` returns the whole chain), and `details` (governance-safe names only —
+never raw argument values).
 
-Scope of this increment: the ncl dispatch surface only. Approval-lifecycle
-events (request/decision as their own events), OneCLI credential holds, and
-channel/sender events are later increments — they attach to `src/audit/` as
-pure adds (new `*.audit.ts` adapters and observer subscriptions).
+Two adapters, one leaf: the CLI adapter (`cli/dispatch.audit.ts`) owns command
+events and the CLI hold's `pending`; the approvals adapter
+(`modules/approvals/approvals.audit.ts`) owns every non-CLI `pending` and every
+decision. Both call the same domain-free `src/audit/` emit/store. Later
+surfaces (message traffic, tool calls, container lifecycle) attach the same way
+— a new `*.audit.ts` adapter, no schema change.
 
 ## Steps
 
@@ -41,12 +57,15 @@ The apply is safe to re-run; every step below is guarded. Skip to
 - `src/audit/` exists
 - `src/cli/resources/index.ts` contains `import './audit.js';`
 - `src/cli/dispatch.ts` contains `export const dispatch = withAudit(dispatchInner);`
+- `src/modules/approvals/index.ts` contains `import './approvals.audit.js';`
 
 Before editing, verify the reach-in targets still exist: `src/cli/dispatch.ts`
 must contain `export async function dispatch(` (or the already-applied
-composition), and `src/cli/resources/index.ts` must be the resource barrel (a
-list of `import './<resource>.js';` lines). If either has moved, stop and
-adapt rather than guessing.
+composition), `src/cli/resources/index.ts` must be the resource barrel (a list
+of `import './<resource>.js';` lines), and `src/modules/approvals/index.ts`
+must be the approvals barrel exposing the lifecycle observers
+(`registerApprovalRequestedHandler` / `registerApprovalResolvedHandler` in
+`./primitive.js`). If any has moved, stop and adapt rather than guessing.
 
 ### 1. Copy the payload
 
@@ -63,9 +82,12 @@ What lands (mirrors of the destination paths):
   reader, boot/maintenance wiring, vocabulary — plus its tests.
 - `src/cli/dispatch.audit.ts` — the CLI adapter: `withAudit` middleware and
   the actor/origin/resource mapping (+ `dispatch.audit.test.ts`).
+- `src/modules/approvals/approvals.audit.ts` — the approvals adapter: the two
+  lifecycle-observer subscriptions that emit `pending` and `approvals.decide`
+  (+ `approvals.audit.test.ts`).
 - `src/cli/resources/audit.ts` — the read-only `ncl audit` resource.
-- `src/audit-wiring.test.ts` — goes red if either core edit below is deleted
-  or drifts.
+- `src/audit-wiring.test.ts` — goes red if any of the three core edits below is
+  deleted or drifts.
 
 ### 2. Register the resource
 
@@ -116,9 +138,29 @@ this shape via the TypeScript AST.
 Loading `dispatch.audit.ts` also boots the audit log: on an enabled box it
 asserts `data/audit/` is writable (refusing to start beats a silent audit
 gap), runs the boot retention prune, and arms an unref'd maintenance timer.
-Nothing else in core changes — no `index.ts` or `host-sweep.ts` edits.
+(The approvals adapter in the next step boots it too — idempotent — so the
+approval surface records even on a build that loads it first.)
 
-### 4. Enable
+### 4. Wire the approval observers
+
+The approval-lifecycle increment's one reach-in, in the approvals barrel
+`src/modules/approvals/index.ts`. Append a side-effect import (next to the
+other module imports; skip if already present):
+
+```typescript
+// Approval-lifecycle audit observers (installed by /add-audit): importing the
+// adapter registers its request/decision observers at boot.
+import './approvals.audit.js';
+```
+
+Importing the adapter is what registers its two observers
+(`registerApprovalRequestedHandler` / `registerApprovalResolvedHandler` from
+`./primitive.js`) — the request/decision events for every non-CLI hold. The
+barrel already loads at boot via `src/modules/index.ts`, and
+`src/audit-wiring.test.ts` asserts the import is present. No `host-sweep.ts`
+edit.
+
+### 5. Enable
 
 Add the two settings to `.env` (idempotent — overwrite or append):
 
@@ -132,18 +174,18 @@ is a no-op and `data/audit/` is never created. `AUDIT_RETENTION_DAYS`: day
 files strictly older than the horizon are hard-deleted (unlinked) at boot and
 once per UTC day; `0` = keep forever; unset = 90.
 
-### 5. Build and test
+### 6. Build and test
 
 Run `build` before the tests — it's what catches a missed copy or a drifted
 import path across the whole composed tree:
 
 ```bash
 pnpm run build
-pnpm exec vitest run src/audit src/cli/dispatch.audit.test.ts src/audit-wiring.test.ts
+pnpm exec vitest run src/audit src/cli/dispatch.audit.test.ts src/modules/approvals/approvals.audit.test.ts src/audit-wiring.test.ts
 pnpm test
 ```
 
-### 6. Restart the service
+### 7. Restart the service
 
 ```bash
 source setup/lib/install-slug.sh
@@ -151,21 +193,25 @@ launchctl kickstart -k gui/$(id -u)/$(launchd_label)   # macOS
 # systemctl --user restart $(systemd_unit)             # Linux
 ```
 
-### 7. Verify (runtime smoke)
+### 8. Verify (runtime smoke)
 
 ```bash
 ncl groups list                     # any command — this one is now an audit event
 cat data/audit/$(date -u +%F).ndjson | tail -1
 ncl audit list --limit 5
+ncl audit list --outcome pending    # what is waiting for approval right now
 ```
 
-The last line of the day-file is the `groups.list` event you just caused.
+The last line of the day-file is the `groups.list` event you just caused. To
+see the approval surface, drive a gated action (e.g. an agent asking to wire an
+MCP server) and approve it, then `ncl audit list --correlation <approval-id>`
+returns the full chain: `pending` → `approvals.decide` → the terminal event.
 
 ## Reading it back
 
 ```
 ncl audit list [--actor <id>] [--action <name-or-prefix>] [--resource <id-or-type>]
-               [--outcome success|failure|denied|pending|approved]
+               [--outcome success|failure|denied|pending|approved|rejected]
                [--since 7d|24h|30m|ISO] [--until …] [--correlation <approval-id>]
                [--limit N] [--format ndjson]
 ```

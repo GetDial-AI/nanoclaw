@@ -37,3 +37,37 @@ export function containerOrigin(sessionId: string, messagingGroupId: string | nu
   }
   return origin;
 }
+
+/**
+ * An approval decision answered on a chat platform (the approver clicked a
+ * card). `channelType` is the platform the click came from.
+ */
+export function channelOrigin(channelType: string | null): AuditOrigin {
+  return channelType ? { transport: 'channel', channel: channelType } : { transport: 'channel' };
+}
+
+/** Channel of a namespaced `<channel>:<handle>` id, or null if unprefixed. */
+export function channelOf(namespacedUserId: string): string | null {
+  const i = namespacedUserId.indexOf(':');
+  return i > 0 ? namespacedUserId.slice(0, i) : null;
+}
+
+/**
+ * Dotted governance name for a hold's action, matching the guard catalog
+ * (agents.create, self_mod.*, a2a.send, senders.admit, channels.register).
+ * An unmapped action falls back to its raw name so a new gated surface still
+ * records — uncatalogued, never dropped.
+ */
+const APPROVAL_ACTION_DOTTED: Record<string, string> = {
+  create_agent: 'agents.create',
+  install_packages: 'self_mod.install_packages',
+  add_mcp_server: 'self_mod.add_mcp_server',
+  a2a_message_gate: 'a2a.send',
+  sender_admit: 'senders.admit',
+  channel_registration: 'channels.register',
+  onecli_credential: 'onecli.credential.use',
+};
+
+export function approvalActionName(action: string): string {
+  return APPROVAL_ACTION_DOTTED[action] ?? action;
+}

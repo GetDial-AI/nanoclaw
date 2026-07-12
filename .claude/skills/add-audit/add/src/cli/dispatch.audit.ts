@@ -174,9 +174,10 @@ type DispatchInner = (
  * Build the audit record for one dispatch. `res` is the response frame, or
  * null when `inner` threw (`err` set) — a crash still leaves a record.
  *
- * Outcome: ok → success (or `approved` when a grant drove the replay),
- * forbidden → denied (captures pre-handler scope denials), approval-pending →
- * pending (the record of a hold), a thrown/other error → failure. A `--help`
+ * Outcome: ok → success (an approved replay included — the approvals.decide
+ * event owns the approved/rejected verdict), forbidden → denied (captures
+ * pre-handler scope denials), approval-pending → pending (the record of a
+ * hold), a thrown/other error → failure. A `--help`
  * probe is introspection, not the verb, so it records under a neutral
  * `cli.help` action with no target — never as the real command succeeding.
  * Correlation is the approval id: a replay carries the row as its grant, and a
@@ -195,14 +196,14 @@ function buildEvent(
 
   const isHelp = req.args.help === true && !!res && res.ok;
   const pending = !!res && !res.ok && res.error.code === 'approval-pending';
-  const approved = !!res && res.ok && !!opts.grant && !isHelp;
 
+  // An approved replay records as ordinary `success`; the approvals.decide
+  // event (approvals.audit.ts) owns the approved/rejected verdict, chained to
+  // this terminal event by the same correlation_id (the grant's approval id).
   const outcome: AuditOutcome = !res
     ? 'failure' // inner threw
     : res.ok
-      ? approved
-        ? 'approved'
-        : 'success'
+      ? 'success'
       : res.error.code === 'forbidden'
         ? 'denied'
         : pending

@@ -9,6 +9,7 @@ already gone. Run from the NanoClaw project root.
 rm -rf src/audit
 rm -f src/cli/dispatch.audit.ts src/cli/dispatch.audit.test.ts
 rm -f src/cli/resources/audit.ts
+rm -f src/modules/approvals/approvals.audit.ts src/modules/approvals/approvals.audit.test.ts
 rm -f src/audit-wiring.test.ts
 ```
 
@@ -26,11 +27,16 @@ made:
 
 Delete the `import './audit.js';` line from `src/cli/resources/index.ts`.
 
-## 4. Remove the settings
+## 4. Unwire the approval observers
+
+Delete the `import './approvals.audit.js';` line (and its comment) from
+`src/modules/approvals/index.ts`.
+
+## 5. Remove the settings
 
 Delete the `AUDIT_ENABLED` and `AUDIT_RETENTION_DAYS` lines from `.env`.
 
-## 5. Rebuild and restart
+## 6. Rebuild and restart
 
 ```bash
 pnpm run build

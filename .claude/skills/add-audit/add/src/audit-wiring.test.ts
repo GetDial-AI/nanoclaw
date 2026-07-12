@@ -118,6 +118,15 @@ describe('dispatch composition (AST wiring)', () => {
   });
 });
 
+describe('approvals adapter wiring', () => {
+  it('the approvals barrel imports the approval audit adapter', () => {
+    // The one reach-in the approval-lifecycle increment adds: importing the
+    // adapter is what registers its two observers at boot. Goes red if dropped.
+    const source = fs.readFileSync(path.resolve('src/modules/approvals/index.ts'), 'utf8');
+    expect(source).toMatch(/import\s+['"]\.\/approvals\.audit\.js['"];/);
+  });
+});
+
 describe('emit invariant', () => {
   it('emitAuditEvent appears only in src/audit/ and *.audit.ts files', () => {
     const srcRoot = path.resolve('src');
