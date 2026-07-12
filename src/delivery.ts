@@ -459,7 +459,11 @@ export function registerDeliveryAction(
  * same line that registers the action.
  */
 export function reenterGuardedDeliveryAction(action: string) {
-  return async (ctx: { session: Session; payload: Record<string, unknown>; approval: PendingApproval }) => {
+  return async (ctx: { session: Session | null; payload: Record<string, unknown>; approval: PendingApproval }) => {
+    if (!ctx.session) {
+      log.warn('Approved replay arrived without a session — dropping', { action });
+      return;
+    }
     const entry = deliveryActions.get(action);
     if (!entry || isUnguardedEntry(entry)) {
       log.warn('Approved replay for an action that is not guard-wrapped — dropping', { action });

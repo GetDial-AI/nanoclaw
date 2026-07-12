@@ -53,9 +53,13 @@ import { getDeliveryAdapter } from '../../delivery.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import { log } from '../../log.js';
 import type { InboundEvent } from '../../channels/adapter.js';
-import type { AgentGroup } from '../../types.js';
-import { pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
-import { createPendingChannelApproval, hasInFlightChannelApproval } from './db/pending-channel-approvals.js';
+import type { AgentGroup, PendingApproval } from '../../types.js';
+import { notifyApprovalRequested, pickApprovalDelivery, pickApprover } from '../approvals/primitive.js';
+import {
+  createPendingChannelApproval,
+  hasInFlightChannelApproval,
+  type PendingChannelApproval,
+} from './db/pending-channel-approvals.js';
 import { hasAdminPrivilege } from './db/user-roles.js';
 
 // ── Value constants (response handler in index.ts parses these) ──
@@ -179,6 +183,7 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
     });
     return;
   }
+
   // Use first agent group for approver resolution — owners and global admins
   // are returned regardless of which group we pass.
   const referenceGroup = agentGroups[0];
@@ -245,7 +250,7 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
   const question = buildQuestionText(isGroup, senderName, channelName, originChannelType, ruleNote);
   const options = normalizeOptions(buildApprovalOptions(agentGroups, delivery.userId));
 
-  createPendingChannelApproval({
+  const row: PendingChannelApproval = {
     messaging_group_id: messagingGroupId,
     agent_group_id: referenceGroup.id,
     original_message: JSON.stringify(event),
@@ -253,7 +258,9 @@ export async function requestChannelApproval(input: RequestChannelApprovalInput)
     created_at: new Date().toISOString(),
     title,
     options_json: JSON.stringify(options),
-  });
+  };
+  createPendingChannelApproval(row);
+  await notifyApprovalRequested({ approval: channelHoldView(row), session: null, deliveredTo: delivery.userId });
 
   const adapter = getDeliveryAdapter();
   if (!adapter) {
@@ -306,6 +313,37 @@ export function buildAgentSelectionOptions(
     value: REJECT_VALUE,
   });
   return normalizeOptions(options);
+}
+
+/**
+ * The channel-registration hold as a hold-record view (the shape
+ * pending_approvals rows have), so its terminal resolutions can announce
+ * through the shared approval-resolved observer. The flow itself keeps its
+ * own table and multi-step conversation.
+ */
+export function channelHoldView(
+  row: PendingChannelApproval,
+  payloadExtra: Record<string, unknown> = {},
+): PendingApproval {
+  return {
+    approval_id: row.messaging_group_id,
+    session_id: null,
+    request_id: row.messaging_group_id,
+    action: 'channel_registration',
+    payload: JSON.stringify({ messagingGroupId: row.messaging_group_id, ...payloadExtra }),
+    created_at: row.created_at,
+    agent_group_id: null,
+    channel_type: null,
+    platform_id: null,
+    platform_message_id: null,
+    expires_at: null,
+    status: 'pending',
+    title: row.title,
+    options_json: row.options_json,
+    approver_user_id: row.approver_user_id,
+    approver_rule: 'admins-of-scope',
+    dedup_key: null,
+  };
 }
 
 /**
