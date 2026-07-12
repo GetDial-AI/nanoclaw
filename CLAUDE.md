@@ -109,7 +109,7 @@ ncl help
 | tasks | list, get, create, update, cancel, pause, resume, delete, run, append-log | Scheduled tasks for an agent group |
 | user-dms | list | Cold-DM cache (read-only) |
 | dropped-messages | list | Messages from unregistered senders (read-only) |
-| approvals | list, get | Pending approval requests (read-only) |
+| approvals | list, get, approve, reject, reject-with-reason | Pending approval requests; `approve`/`reject`/`reject-with-reason` resolve one from the host CLI (operator-only, `--as-user <approver>`) via the same auth + resolution as a channel button |
 
 Key files: `src/cli/dispatch.ts` (dispatcher + approval handler), `src/cli/crud.ts` (generic CRUD registration), `src/cli/resources/` (per-resource definitions).
 

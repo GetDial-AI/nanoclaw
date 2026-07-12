@@ -131,7 +131,7 @@ function namespacedUserId(payload: ResponsePayload): string | null {
   return payload.userId.includes(':') ? payload.userId : `${payload.channelType}:${payload.userId}`;
 }
 
-function isAuthorizedApprovalClick(approval: PendingApproval, payload: ResponsePayload): boolean {
+export function isAuthorizedApprovalClick(approval: PendingApproval, payload: ResponsePayload): boolean {
   const userId = namespacedUserId(payload);
   if (!userId) return false;
 
