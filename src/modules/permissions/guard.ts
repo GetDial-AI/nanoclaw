@@ -11,12 +11,13 @@
  * routeInbound, which then passes the gate structurally via membership, no
  * grant needed.
  *
- * channels.register — click/reply authorization for the channel-registration
- * flow, verbatim from today's response handler: the delivered approver, or an
- * admin of the pending row's anchor agent group. Consulted by the wrapped
- * response handler (card clicks) and the wrapped name-capture interceptor
- * (free-text replies), so a privilege revoked mid-flow is re-checked at each
- * step.
+ * channels.register — click authorization for the channel-registration flow,
+ * verbatim from today's response handler: the delivered approver, or an
+ * admin of the pending row's anchor agent group. Consulted inline by the
+ * card-click response handler only. The free-text name reply is deliberately
+ * NOT re-authorized (main's behavior): the click arms the capture and stands
+ * as the auth — a privilege revoked between the click and the reply still
+ * completes the flow.
  */
 import { ALLOW, DENY, HOLD, defineGuardedAction } from '../../guard/index.js';
 import { getPendingChannelApproval } from './db/pending-channel-approvals.js';
