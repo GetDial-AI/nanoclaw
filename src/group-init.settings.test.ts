@@ -142,6 +142,35 @@ describe('reconcileHarnessSettings via initGroupFilesystem', () => {
     expect(vi.mocked(log.warn).mock.calls.some(([msg]) => String(msg).includes('reconcile failed'))).toBe(true);
   });
 
+  it('never replaces a malformed unmanaged value: a non-object env survives agent-teams=on', () => {
+    // Regression (external review): {"env":"operator-managed-value"} used to
+    // become {} when the teams mechanism wrote its key, silently destroying
+    // the operator's value. Wrong-shaped parents are warn-and-skip; the other
+    // mechanism (disableWorkflows, a top-level key) still applies.
+    const ag = makeGroup();
+    const file = settingsPath(ag);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ env: 'operator-managed-value' }, null, 2) + '\n');
+
+    initGroupFilesystem(ag, { harnessCapabilities: { 'agent-teams': 'on', workflow: 'off' } });
+
+    const after = readSettings(ag);
+    expect(after.env).toBe('operator-managed-value');
+    expect(after.disableWorkflows).toBe(true);
+    expect(vi.mocked(log.warn).mock.calls.some(([msg]) => String(msg).includes('not an object'))).toBe(true);
+  });
+
+  it('never replaces a malformed unmanaged value: a non-object hooks survives the PreCompact ensure', () => {
+    const ag = makeGroup();
+    const file = settingsPath(ag);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ hooks: 'custom-hook-config' }, null, 2) + '\n');
+
+    initGroupFilesystem(ag, { harnessCapabilities: DEFAULT_CAPS });
+
+    expect(readSettings(ag).hooks).toBe('custom-hook-config');
+  });
+
   it('does not touch settings.json when no capabilities are passed (non-spawn callers)', () => {
     const ag = makeGroup();
     initGroupFilesystem(ag, { harnessCapabilities: DEFAULT_CAPS });

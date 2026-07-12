@@ -203,9 +203,31 @@ function applyGroupSettings(
   }
 }
 
+/**
+ * A managed parent container inside settings.json: absent → created; present
+ * with the wrong shape → null. Never replaces an existing value — a malformed
+ * `env`/`hooks` is still operator content, and clobbering it would violate the
+ * "unmanaged settings are never touched" contract.
+ */
+function managedParent(settings: SettingsObject, key: string): SettingsObject | null {
+  if (!(key in settings)) {
+    const fresh: SettingsObject = {};
+    settings[key] = fresh;
+    return fresh;
+  }
+  const obj = asObject(settings[key]);
+  if (!obj) log.warn(`settings.json "${key}" is not an object — leaving it as-is, skipping managed keys under it`);
+  return obj;
+}
+
 /** Ensure the PreCompact archiving hook is present, preserving existing hooks. */
 function ensurePreCompactHook(settings: SettingsObject): void {
-  const hooks = asObject(settings.hooks) ?? (settings.hooks = {});
+  const hooks = managedParent(settings, 'hooks');
+  if (!hooks) return;
+  if ('PreCompact' in hooks && !Array.isArray(hooks.PreCompact)) {
+    log.warn('settings.json hooks.PreCompact is not an array — leaving it as-is');
+    return;
+  }
   const existing = Array.isArray(hooks.PreCompact) ? (hooks.PreCompact as unknown[]) : (hooks.PreCompact = []);
   if (JSON.stringify(existing).includes(PRE_COMPACT_COMMAND)) return;
   existing.push({ hooks: [{ type: 'command', command: PRE_COMPACT_COMMAND }] });
@@ -229,8 +251,8 @@ function reconcileHarnessKeys(
     if (m.kind === 'env') {
       // Presence of the env key IS the on-state.
       if (state === 'on') {
-        const env = asObject(settings.env) ?? (settings.env = {});
-        env[m.key] = '1';
+        const env = managedParent(settings, 'env');
+        if (env) env[m.key] = '1';
       } else {
         const env = asObject(settings.env);
         if (env && m.key in env) delete env[m.key];
