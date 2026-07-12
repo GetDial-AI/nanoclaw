@@ -205,29 +205,33 @@ describe('agent message policies', () => {
     expect(requestApproval).not.toHaveBeenCalled();
   });
 
-  it('destination revoked between hold and approve → the approved replay is blocked', async () => {
+  it('destination revoked between hold and approve → refused cleanly, requester told, nothing delivered', async () => {
     setMessagePolicy(A, B, 'telegram:dana', now());
     const payload = { id: 'held-2', platform_id: B, content: JSON.stringify({ text: 'stale' }), in_reply_to: null };
     const approval = seedA2aHold('appr-a2a-2', payload);
 
     deleteDestination(A, 'b'); // revoke A→B while the card is pending
 
-    await expect(
-      applyA2aMessageGate({ session: SA, userId: 'telegram:dana', notify: vi.fn(), payload, approval }),
-    ).rejects.toThrow(/unauthorized agent-to-agent/);
+    const notify = vi.fn();
+    // An expected policy refusal — resolves (no throw), so the response
+    // handler never records it as a handler crash.
+    await applyA2aMessageGate({ session: SA, userId: 'telegram:dana', notify, payload, approval });
+
     expect(readInbound(B, SB.id)).toHaveLength(0);
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/not delivered.*no destination for/));
   });
 
-  it('mismatched grant (held for another target) refuses the replay', async () => {
+  it('mismatched grant (held for another target) refuses the replay cleanly', async () => {
     setMessagePolicy(A, B, 'telegram:dana', now());
     // Grant was approved for a message to A (different target than the replay).
     const approval = seedA2aHold('appr-a2a-3', { id: 'other', platform_id: A, content: '{}', in_reply_to: null });
     const payload = { id: 'held-3', platform_id: B, content: JSON.stringify({ text: 'swap' }), in_reply_to: null };
 
-    await expect(
-      applyA2aMessageGate({ session: SA, userId: 'telegram:dana', notify: vi.fn(), payload, approval }),
-    ).rejects.toThrow(/invalid or mismatched grant/);
+    const notify = vi.fn();
+    await applyA2aMessageGate({ session: SA, userId: 'telegram:dana', notify, payload, approval });
+
     expect(readInbound(B, SB.id)).toHaveLength(0);
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/not delivered.*invalid or mismatched grant/));
   });
 
   it('a grant only works while its row is live (executes once)', async () => {
@@ -237,10 +241,11 @@ describe('agent message policies', () => {
 
     deletePendingApproval(approval.approval_id); // resolution already consumed the row
 
-    await expect(
-      applyA2aMessageGate({ session: SA, userId: 'telegram:dana', notify: vi.fn(), payload, approval }),
-    ).rejects.toThrow(/invalid or mismatched grant/);
+    const notify = vi.fn();
+    await applyA2aMessageGate({ session: SA, userId: 'telegram:dana', notify, payload, approval });
+
     expect(readInbound(B, SB.id)).toHaveLength(0);
+    expect(notify).toHaveBeenCalledWith(expect.stringMatching(/not delivered.*invalid or mismatched grant/));
   });
 
   // ── ghost-gate cleanup ──

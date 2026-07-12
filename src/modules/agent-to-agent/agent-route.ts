@@ -27,7 +27,7 @@ import { getAgentGroup } from '../../db/agent-groups.js';
 import { getInboundSourceSessionId, getMostRecentPeerSourceSessionId } from '../../db/session-db.js';
 import { getSession } from '../../db/sessions.js';
 import { wakeContainer } from '../../container-runner.js';
-import { guard } from '../../guard/index.js';
+import { GuardDenyError, guard } from '../../guard/index.js';
 import { log } from '../../log.js';
 import { openInboundDb, resolveSession, sessionDir, writeSessionMessage } from '../../session-manager.js';
 import type { PendingApproval, Session } from '../../types.js';
@@ -255,7 +255,7 @@ export async function routeAgentMessage(
   });
 
   if (decision.effect === 'deny') {
-    throw new Error(decision.reason);
+    throw new GuardDenyError(decision.reason);
   }
 
   // Gated edge: hold the message and return (not throw) so the delivery loop

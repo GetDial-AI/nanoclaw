@@ -1,4 +1,5 @@
 /** Approve handler for a held a2a message. (Reject is handled by the generic response-handler path.) */
+import { GuardDenyError } from '../../guard/index.js';
 import { log } from '../../log.js';
 import type { ApprovalHandler } from '../approvals/index.js';
 import { routeAgentMessage, type RoutableAgentMessage } from './agent-route.js';
@@ -20,10 +21,25 @@ export const applyA2aMessageGate: ApprovalHandler = async ({ session, payload, a
 
   // One replay semantics: re-enter the guarded route carrying the approval
   // row as the grant. The policy hold is satisfied, but the structural
-  // checks run live — un-wiring the pair between hold and approve now
-  // blocks delivery (the throw surfaces via the response handler's
-  // "approved, but applying it failed" notify).
-  await routeAgentMessage(msg, session, { grant: approval });
+  // checks run live — a deny here (destination revoked while the card was
+  // pending, dead or mismatched grant) is an EXPECTED policy outcome, not a
+  // crash: tell the requester, log a warning, and let anything else keep the
+  // response handler's failure path.
+  try {
+    await routeAgentMessage(msg, session, { grant: approval });
+  } catch (err) {
+    if (err instanceof GuardDenyError) {
+      log.warn('Approved a2a replay refused by the guard', {
+        from: session.agent_group_id,
+        to: platform_id,
+        msgId: msg.id,
+        reason: err.message,
+      });
+      notify(`Message approved, but not delivered — no longer authorized: ${err.message}`);
+      return;
+    }
+    throw err;
+  }
   log.info('Held agent message delivered after approval', {
     from: session.agent_group_id,
     to: platform_id,

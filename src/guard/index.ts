@@ -18,6 +18,7 @@ export {
 export {
   ALLOW,
   DENY,
+  GuardDenyError,
   HOLD,
   isUnguarded,
   unguarded,

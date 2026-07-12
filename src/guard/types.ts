@@ -73,3 +73,16 @@ export const HOLD = (reason: string, approverUserId?: string): GuardDecision => 
   reason,
   approverUserId,
 });
+
+/**
+ * A guard deny travelling as an exception — for flows whose entry point
+ * signals refusal by throwing (the a2a route). Catching it lets a caller
+ * distinguish "the guard refused, as designed" (report to the requester,
+ * log a warning) from a real runtime failure (crash path, stack trace).
+ */
+export class GuardDenyError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'GuardDenyError';
+  }
+}
