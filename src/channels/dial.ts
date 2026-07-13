@@ -112,8 +112,10 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   const client = new DialClient({ apiKey: config.apiKey });
   const spoolDir = path.join(DATA_DIR, 'dial', 'inbound');
   const handlerPath = path.join(DATA_DIR, 'dial', 'handle-dial-event.sh');
-  // The shared line's platform_id. Falls back to the sender if somehow unset
-  // (degrades to per-sender conversations rather than breaking).
+  // The account's default Dial number, used as the fallback line when an
+  // inbound event doesn't name the number it arrived on. Each event's actual
+  // destination number (data.to) takes precedence, so the adapter serves every
+  // number on the account, not just this one.
   const line = config.fromNumber;
 
   let setup: ChannelSetup | null = null;
@@ -131,13 +133,17 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
     return false;
   }
 
-  async function sendSms(to: string, body: string): Promise<string | undefined> {
+  async function sendSms(to: string, body: string, from?: string): Promise<string | undefined> {
+    // Send from the number the conversation is on (`from`); fall back to the
+    // account default. This is what lets one adapter serve multiple Dial
+    // numbers — each reply goes out from the number the person actually texted.
+    const fromNumber = from || config.fromNumber;
     let lastId: string | undefined;
     for (const chunk of body.length <= MAX_CHUNK ? [body] : chunkText(body, MAX_CHUNK)) {
       const sent = await client.sendMessage({
         to,
         body: chunk,
-        ...(config.fromNumber ? { fromNumber: config.fromNumber } : {}),
+        ...(fromNumber ? { fromNumber } : {}),
       });
       lastId = sent?.id ?? lastId;
     }
@@ -150,7 +156,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
    * install has none yet, confirm by SMS — and swallow the message so it never
    * reaches an agent. Returns true when consumed.
    */
-  async function consumePairing(fromNumber: string, text: string): Promise<boolean> {
+  async function consumePairing(fromNumber: string, text: string, viaLine: string): Promise<boolean> {
     let consumed;
     try {
       consumed = await tryConsume({ text, fromNumber });
@@ -170,7 +176,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
     }
     log.info('Dial pairing accepted', { fromNumber, promotedToOwner: promoted });
     try {
-      await sendSms(fromNumber, 'Paired ✅ — your NanoClaw assistant is set up. Text me anytime.');
+      await sendSms(fromNumber, 'Paired ✅ — your NanoClaw assistant is set up. Text me anytime.', viaLine);
     } catch (err) {
       log.warn('Dial: pairing confirmation SMS failed', { err });
     }
@@ -185,16 +191,24 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
 
     let peer = '';
     let text = '';
+    // The Dial number this event arrived on (data.to for SMS; our own side of
+    // a call). Used as the messaging group's platform_id so one adapter can
+    // serve multiple Dial numbers — each number is its own group/line.
+    let eventLine = '';
     if (env.type === 'message.received') {
       if (data.source && data.source !== 'external') return; // ignore Dial-synthesized test SMS
       peer = typeof data.from === 'string' ? data.from : '';
+      eventLine = typeof data.to === 'string' ? data.to : '';
       text = typeof data.body === 'string' ? data.body : '';
-      // Pairing codes are consumed before any agent sees them.
-      if (peer && (await consumePairing(peer, text))) return;
+      // Pairing codes are consumed before any agent sees them. Confirm from the
+      // number the code was sent to (falls back to the account default).
+      if (peer && (await consumePairing(peer, text, eventLine || line))) return;
     } else if (env.type === 'call.ended') {
       const outbound = data.direction === 'outbound';
       const other = outbound ? data.to : data.from;
       peer = typeof other === 'string' ? other : '';
+      const mine = outbound ? data.from : data.to;
+      eventLine = typeof mine === 'string' ? mine : '';
       const dur = typeof data.durationSeconds === 'number' ? `, ${data.durationSeconds}s` : '';
       const callId = typeof data.callId === 'string' ? data.callId : '';
       const transcript =
@@ -206,11 +220,14 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
     if (!peer || !text) return;
 
     const id = [data.messageId, data.callId, env.id].find((v): v is string => typeof v === 'string' && !!v);
-    // Public-line model: the number itself is the messaging group; the peer is
-    // the thread, so replies route back to them and every sender shares one
-    // (public) wiring.
-    const platformId = line || peer;
-    const threadId = line ? peer : null;
+    // Public-line model: the Dial number itself is the messaging group; the peer
+    // is the thread, so replies route back to them and every sender shares one
+    // (public) wiring. `eventLine` is the number this event hit; fall back to the
+    // account default when the event omits it (keeps single-number installs
+    // unchanged).
+    const activeLine = eventLine || line;
+    const platformId = activeLine || peer;
+    const threadId = activeLine ? peer : null;
     const msg: InboundMessage = {
       id: id ?? peer,
       kind: 'chat',
@@ -345,14 +362,16 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       if (!text) return undefined;
 
       // Public-line model: the correspondent is the thread. Reply to threadId;
-      // platformId is the shared line. Never text the line's own number.
+      // platformId is the Dial line this conversation is on. Never text the
+      // line's own number, and send the reply FROM that line so multi-number
+      // installs answer from the number the person texted.
       const recipient = threadId || platformId;
-      if (!recipient || recipient === config.fromNumber) {
+      if (!recipient || recipient === platformId) {
         log.warn('Dial: no reply recipient (no thread) — dropping outbound', { platformId, threadId });
         return undefined;
       }
       try {
-        return await sendSms(recipient, text);
+        return await sendSms(recipient, text, platformId);
       } catch (err) {
         log.error('Dial: sendMessage failed', { recipient, err });
         return undefined;
