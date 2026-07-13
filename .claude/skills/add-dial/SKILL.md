@@ -7,7 +7,7 @@ description: Add Dial channel integration — a real phone number for SMS and AI
 
 Adds a real phone number to NanoClaw via a native adapter for [Dial](https://getdial.ai). Outbound SMS goes through the official `@getdial/sdk`; inbound (texts, ended calls) arrives via Dial's documented **CLI command-target** — no local HTTP endpoint. Inbound voice calls are answered by Dial's AI receptionist; the adapter surfaces the `call.ended` event so the agent can follow up.
 
-Unlike a bot API, Dial gives the account its own phone number, auto-provisioned at signup. The operator owns it through their Dial account — there is no pairing handshake.
+Unlike a bot API, Dial gives the account its own phone number, auto-provisioned at signup. That number is modelled as a single **public, threaded line**: one messaging group whose `platform_id` is the Dial number itself, and each remote correspondent is a thread inside it (thread id = their E.164). One wiring with `unknown_sender_policy: 'public'` therefore lets anyone text or call the number and reach the agent with no per-sender approval, while replies still route back to the right person via their thread. Operator ownership is bootstrapped by a one-time **pairing** handshake: the operator texts a 4-digit code to the number, and the adapter records their number as owner before the message reaches an agent.
 
 ## Prerequisites
 
@@ -147,26 +147,35 @@ If the `dial` CLI isn't on PATH at startup, or the listen daemon isn't running, 
 
 ## Wiring
 
-### DMs
+The Dial line is wired **once**, as a single public messaging group whose
+`platform_id` is the Dial number itself. Every remote number that texts or
+calls it lands in that one group as its own thread — new senders do **not**
+create new messaging groups, and there is no per-sender approval to grant
+(`unknown_sender_policy` is `public`).
 
-After the service starts, text the Dial number from your phone. The router auto-creates a `messaging_groups` row keyed by your number (E.164). Then:
+The normal path is the setup wizard (`/setup` → connect Dial, or re-run the
+Dial channel flow), which provisions the number, runs the pairing handshake,
+and wires the public line for you. During pairing the operator texts a 4-digit
+code to the Dial number; the running adapter consumes it, records that number
+as a `dial:<E.164>` user, and grants it the `owner` role if the install has no
+owner yet — all before the message reaches an agent.
+
+### Inspecting the wired line
 
 ```bash
 pnpm exec tsx scripts/q.ts data/v2.db \
-  "SELECT id, platform_id FROM messaging_groups WHERE channel_type='dial' ORDER BY created_at DESC LIMIT 5"
+  "SELECT id, platform_id, unknown_sender_policy FROM messaging_groups WHERE channel_type='dial'"
 ```
 
-Pass the `id` to `/init-first-agent` or `/manage-channels` to wire it to an agent group.
+The `platform_id` is the **Dial line number** (the agent's provisioned number),
+not any sender's number, and `unknown_sender_policy` should read `public`.
 
-### Grant user access
+### Manual wiring (only if not using the wizard)
 
-New Dial senders are dropped until granted access (default unknown-sender policy is `request_approval`). After the sender's number appears in `messaging_groups` (host service running):
-
-```bash
-ncl users create --id "dial:+1YOURNUMBER" --kind dial --display-name "<name>"
-ncl roles grant --user "dial:+1YOURNUMBER" --role owner
-ncl members add --user "dial:+1YOURNUMBER" --group ag-AGENTID
-```
+Pass the messaging group `id` above to `/init-first-agent` or
+`/manage-channels` to wire it to an agent group. `public` only takes effect
+once the line is actually wired to an agent — an unwired line still holds
+unknown senders for approval.
 
 ## Next Steps
 
@@ -177,12 +186,12 @@ Otherwise, run `/init-first-agent` to create an agent and wire it to your Dial D
 ## Channel Info
 
 - **type**: `dial`
-- **terminology**: Dial has phone numbers, SMS messages, and AI voice calls. There are **no group chats** — every conversation is 1:1 between the account's number and a remote number.
-- **supports-threads**: no
-- **platform-id-format**: the remote party's phone number in E.164 (`+14155550123`) — sent as-is, no channel prefix.
-- **how-to-find-id**: Text the Dial number, then query `messaging_groups` as shown above. The `platform_id` is the sender's E.164 number.
+- **terminology**: Dial has phone numbers, SMS messages, and AI voice calls. The Dial number is a single public, threaded line — one messaging group with each remote correspondent as a thread — not a set of separate 1:1 chats.
+- **supports-threads**: yes — each correspondent is a thread (thread id = their E.164) within the one messaging group.
+- **platform-id-format**: the **Dial line number** in E.164 (`+14155550123`), sent as-is with no channel prefix. This is the messaging group's `platform_id`; each sender's own number is the thread id, not the `platform_id`.
+- **how-to-find-id**: Query `messaging_groups` as shown above (`WHERE channel_type='dial'`). The `platform_id` is the Dial line number.
 - **typical-use**: Personal assistant reachable by text; sends SMS, places AI voice calls, and receives 2FA codes and replies.
-- **default-isolation**: One agent per Dial number. Multiple people texting the same number share the number but each gets their own session (default `shared` session mode).
+- **default-isolation**: One agent on one public Dial line. Anyone can reach it (`unknown_sender_policy: 'public'`), and each correspondent gets their own thread and session.
 
 ### Features
 
