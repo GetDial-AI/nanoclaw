@@ -34,6 +34,7 @@ import k from 'kleur';
 import { BACK_TO_CHANNEL_SELECTION } from './lib/back-nav.js';
 import { runDiscordChannel } from './channels/discord.js';
 import { runIMessageChannel } from './channels/imessage.js';
+import { runDialChannel } from './channels/dial.js';
 import { runSignalChannel } from './channels/signal.js';
 import { runSlackChannel } from './channels/slack.js';
 import { runTeamsChannel } from './channels/teams.js';
@@ -69,7 +70,17 @@ import { isValidTimezone } from '../src/timezone.js';
 const CLI_AGENT_NAME = 'Terminal Agent';
 const RUN_START = Date.now();
 
-type ChannelChoice = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'teams' | 'slack' | 'imessage' | 'other' | 'skip';
+type ChannelChoice =
+  | 'telegram'
+  | 'discord'
+  | 'whatsapp'
+  | 'dial'
+  | 'signal'
+  | 'teams'
+  | 'slack'
+  | 'imessage'
+  | 'other'
+  | 'skip';
 
 async function main(): Promise<void> {
   // Make sure ~/.local/bin is on PATH for every child process we spawn.
@@ -555,6 +566,8 @@ async function main(): Promise<void> {
         result = await runDiscordChannel(displayName!);
       } else if (channelChoice === 'whatsapp') {
         result = await runWhatsAppChannel(displayName!);
+      } else if (channelChoice === 'dial') {
+        result = await runDialChannel(displayName!);
       } else if (channelChoice === 'signal') {
         result = await runSignalChannel(displayName!);
       } else if (channelChoice === 'teams') {
@@ -678,6 +691,8 @@ function channelDmLabel(choice: ChannelChoice): string | null {
       return 'Discord DMs';
     case 'whatsapp':
       return 'WhatsApp';
+    case 'dial':
+      return 'phone';
     case 'signal':
       return 'Signal';
     case 'teams':
@@ -1237,6 +1252,7 @@ async function askChannelChoice(): Promise<ChannelChoice> {
         { value: 'telegram', label: 'Yes, connect Telegram', hint: 'recommended' },
         { value: 'discord', label: 'Yes, connect Discord' },
         { value: 'whatsapp', label: 'Yes, connect WhatsApp', hint: 'best with a dedicated number' },
+        { value: 'dial', label: 'Yes, connect Dial', hint: 'real phone number: SMS + AI voice calls' },
         {
           value: 'signal',
           label: 'Yes, connect Signal',
