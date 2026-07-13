@@ -1,38 +1,15 @@
 /**
  * Dial channel flow for setup:auto.
  *
- * `runDialChannel(displayName)` owns the full branch from the `dial` CLI
- * presence check through the welcome SMS:
+ * `runDialChannel(displayName)`: probe the `dial` CLI → reuse the signed-in
+ * account or run signup(email+OTP)+onboard → confirm the auto-provisioned
+ * number → install the adapter (setup/add-dial.sh) → ensure the `dial listen`
+ * daemon (the adapter registers the command target itself on the next boot) →
+ * restart the service → wire the first agent to the operator's phone.
  *
- *   1. Probe the `dial` CLI on PATH. If missing, print the one-line installer
- *      (curl https://getdial.ai/install | bash) and bail with an actionable
- *      error.
- *   2. `dial doctor --json` — if already signed in, offer to reuse that
- *      account (no email/OTP re-prompt); otherwise collect email → `dial
- *      signup` → OTP → `dial onboard` (which also provisions the first US
- *      number and installs the nanoclaw Dial skill).
- *   3. Confirm the account's auto-provisioned number (`dial number list`).
- *      Provisioning is Dial's own concern — we never ask the operator to pick
- *      or buy a number.
- *   4. Install the adapter via setup/add-dial.sh (idempotent).
- *   5. Wire the CLI command-target handler: ensure the `dial listen` daemon is
- *      installed. The adapter registers the actual command target on its next
- *      boot, so the service restart in step 6 completes the wiring.
- *   6. Kick the service so the adapter picks up the Dial credentials and
- *      registers its command target.
- *   7. Ask operator role, the phone they'll text from, and the agent name.
- *   8. Wire the agent via scripts/init-first-agent.ts; the existing welcome
- *      path delivers the greeting through the adapter (an SMS to their phone).
- *
- * Dial has no group chats: every conversation is a 1:1 exchange between the
- * account's number and a remote number, so the operator's own phone is both
- * the user handle and the DM platform id. Ownership is established by the Dial
- * account auth (they signed up / signed in), so — unlike Telegram — there is
- * no pairing handshake.
- *
- * Output obeys the three-level contract: clack UI for the user, structured
- * entries in logs/setup.log, full raw output in per-step files under
- * logs/setup-steps/. See docs/setup-flow.md.
+ * Dial has no group chats — every conversation is 1:1 with a remote number, so
+ * the operator's own phone is both the user handle and the DM platform id, and
+ * ownership comes from the Dial account auth (no pairing handshake).
  */
 import { spawnSync } from 'child_process';
 
@@ -51,8 +28,7 @@ const DEFAULT_INBOUND_INSTRUCTION =
 
 interface DoctorReport {
   auth?: { signedIn?: boolean; email?: string };
-  listen?: { installed?: boolean; running?: boolean };
-  nextStep?: string;
+  listen?: { running?: boolean };
 }
 
 export async function runDialChannel(displayName: string): Promise<void> {
@@ -268,27 +244,15 @@ async function signUpFlow(cliPath: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 interface NumberListResponse {
-  numbers?: Array<{ number?: string; nickname?: string | null }>;
+  numbers?: Array<{ number?: string }>;
 }
 
 function confirmProvisionedNumber(cliPath: string): void {
   const list = dialJson<NumberListResponse>(cliPath, ['number', 'list']);
   const numbers = list?.numbers?.map((n) => n.number).filter((n): n is string => !!n) ?? [];
-  if (numbers.length === 0) {
-    p.note(
-      "Dial usually provisions a US number automatically at signup. Couldn't read one back just now — the adapter will still use whatever number your account has. You can check with `dial number list`.",
-      'Your Dial number',
-    );
-    return;
-  }
+  if (numbers.length === 0) return; // couldn't read one back; the adapter uses whatever the account has
   p.note(
-    [
-      'Your agent will send and receive from:',
-      '',
-      ...numbers.map((n) => `  ${accentGreen(n)}`),
-      '',
-      k.dim('Provisioned by Dial at signup — nothing to configure here.'),
-    ].join('\n'),
+    [`Your agent sends and receives from:`, '', ...numbers.map((n) => `  ${accentGreen(n)}`)].join('\n'),
     'Your Dial number',
   );
   setupLog.step('dial-number', 'success', 0, { NUMBERS: numbers.join(',') });

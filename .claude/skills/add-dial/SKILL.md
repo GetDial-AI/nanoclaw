@@ -5,7 +5,7 @@ description: Add Dial channel integration — a real phone number for SMS and AI
 
 # Add Dial Channel
 
-Adds a real phone number to NanoClaw via a native adapter for [Dial](https://getdial.ai). Outbound (SMS/MMS) goes through the official `@getdial/sdk`; inbound (texts, ended calls) arrives via Dial's documented **CLI command-target** — no local HTTP endpoint. Inbound voice calls are answered by Dial's AI receptionist; the adapter surfaces the `call.ended` event so the agent can follow up.
+Adds a real phone number to NanoClaw via a native adapter for [Dial](https://getdial.ai). Outbound SMS goes through the official `@getdial/sdk`; inbound (texts, ended calls) arrives via Dial's documented **CLI command-target** — no local HTTP endpoint. Inbound voice calls are answered by Dial's AI receptionist; the adapter surfaces the `call.ended` event so the agent can follow up.
 
 Unlike a bot API, Dial gives the account its own phone number, auto-provisioned at signup. The operator owns it through their Dial account — there is no pairing handshake.
 
@@ -100,26 +100,16 @@ No `.env` entry is required — the adapter reads Dial's own auth file
 (`~/.local/share/dial/auth.v1.json`) written by `dial onboard`. If no API key
 is found there, the channel is skipped at startup.
 
-### Optional env overrides
+### Optional env override
 
 ```bash
-# Use an explicit API key instead of the auth file (e.g. a non-default install)
-DIAL_API_KEY=sk_...
-
-# Number to send from, E.164. Defaults to the auth file's provisioned number.
-DIAL_FROM_NUMBER=+14155550123
-
-# Auth file path (default: $XDG_DATA_HOME/dial/auth.v1.json or ~/.local/share/dial/auth.v1.json)
-DIAL_AUTH_FILE=/path/to/auth.v1.json
-
-# Dial API base URL (default: https://api.getdial.ai)
-DIAL_BASE_URL=https://api.getdial.ai
-
-# Path to the dial CLI (default: resolved on PATH). Used to register the command target.
+# Path to the dial CLI (default: resolved on PATH). Set this if the service
+# can't find `dial` (launchd/systemd run with a limited PATH). Used to
+# register the inbound command target.
 DIAL_CLI_PATH=/usr/local/bin/dial
 ```
 
-If you set any of these, sync to the container: `mkdir -p data/env && cp .env data/env/env`
+If you set it, sync to the container: `mkdir -p data/env && cp .env data/env/env`
 
 ### Restart
 
@@ -179,7 +169,7 @@ Otherwise, run `/init-first-agent` to create an agent and wire it to your Dial D
 ## Channel Info
 
 - **type**: `dial`
-- **terminology**: Dial has phone numbers, SMS/MMS messages, and AI voice calls. There are **no group chats** — every conversation is 1:1 between the account's number and a remote number.
+- **terminology**: Dial has phone numbers, SMS messages, and AI voice calls. There are **no group chats** — every conversation is 1:1 between the account's number and a remote number.
 - **supports-threads**: no
 - **platform-id-format**: the remote party's phone number in E.164 (`+14155550123`) — sent as-is, no channel prefix.
 - **how-to-find-id**: Text the Dial number, then query `messaging_groups` as shown above. The `platform_id` is the sender's E.164 number.
@@ -189,9 +179,7 @@ Otherwise, run `/init-first-agent` to create an agent and wire it to your Dial D
 ### Features
 
 - SMS send/receive; long replies are chunked (~1500 chars/segment).
-- MMS — outbound file attachments are sent as media; inbound media surface as `[Media: <url>]` lines plus a structured `attachments` array.
 - AI voice calls — inbound calls are answered by Dial's receptionist (configured via the number's inbound instruction); `call.ended` is surfaced to the agent with a hint to run `dial call get <id>` for the transcript. The agent places outbound calls via the `dial` CLI (see the `dial-cli` skill).
-- Typing indicators — sent via the SDK (iMessage numbers show them; SMS ignores them, always safe).
 - Event dedup — the listen daemon retries a failed handler once; the adapter drops duplicate event ids within a 5-minute window.
 
 ## Troubleshooting
@@ -202,7 +190,7 @@ Otherwise, run `/init-first-agent` to create an agent and wire it to your Dial D
 grep -i dial logs/nanoclaw.log | tail
 ```
 
-`Dial: no API key … skipping channel` means `dial onboard` hasn't run (no `~/.local/share/dial/auth.v1.json`), or set `DIAL_API_KEY`. Confirm with `dial doctor --json` (`auth.signedIn: true`).
+`Dial: not signed in … skipping channel` means `dial onboard` hasn't run (no `~/.local/share/dial/auth.v1.json`). Confirm with `dial doctor --json` (`auth.signedIn: true`).
 
 ### Inbound texts never arrive
 
@@ -213,7 +201,7 @@ grep -i dial logs/nanoclaw.log | tail
 
 ### Outbound send fails with 401
 
-The API key in the auth file is stale or the OneCLI/selective-secret model isn't the issue here (Dial creds are host-side, not vault-injected). Re-run `dial onboard` or refresh `dial doctor`, then restart.
+The API key in the auth file is stale. Re-run `dial onboard` (or check `dial doctor`), then restart NanoClaw.
 
 ### `dial` not on PATH under the service
 
