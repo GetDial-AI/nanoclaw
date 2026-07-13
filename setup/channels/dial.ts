@@ -171,9 +171,13 @@ async function runPairing(lineNumber: string | null): Promise<string> {
   s.start('Waiting for your text…');
   try {
     // Cap the wait so setup can't hang forever; the operator can re-run.
+    // .unref() so the pending timer never keeps the process alive after a
+    // successful pair (otherwise setup hangs at the end until it fires).
     const consumed = await Promise.race([
       waitForPairing(rec.code),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5 * 60_000)),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('timeout')), 5 * 60_000).unref();
+      }),
     ]);
     const from = consumed.consumed?.fromNumber;
     if (!from) throw new Error('paired but no number recorded');
