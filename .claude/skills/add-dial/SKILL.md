@@ -60,9 +60,8 @@ Skip to **Credentials** if all of these are already in place:
 
 Otherwise continue. Every step below is safe to re-run.
 
-If Dial is **already installed** and you're here to give the agent a **second
-phone number**, skip everything below and jump to
-[Add another Dial number](#add-another-dial-number).
+To add a **second** Dial number to an existing install, use the dedicated
+`/add-dial-number` skill instead.
 
 ### 1. Fetch the channels branch
 
@@ -180,50 +179,6 @@ Pass the messaging group `id` above to `/init-first-agent` or
 `/manage-channels` to wire it to an agent group. `public` only takes effect
 once the line is actually wired to an agent — an unwired line still holds
 unknown senders for approval.
-
-## Add another Dial number
-
-One NanoClaw install can serve **multiple Dial numbers** — each is its own
-public, threaded line with its own conversations, and the agent replies from
-whichever number a person texted. Use this to run, say, a personal line and a
-support line side by side.
-
-**Prerequisite — the multi-number adapter.** This only works if
-`src/channels/dial.ts` routes on the number each event arrived on (`data.to`)
-rather than a single hardcoded number. If your copy predates that, refresh it
-first (`/update-skills`, or re-copy `src/channels/dial.ts` from the `channels`
-branch and rebuild). Older single-number adapters will misfile the second
-number's messages into the first line and reply from the wrong number.
-
-**1. Get the number (Dial side).** Reuse one you own, or buy a new US number:
-
-```bash
-dial number list --json                                  # numbers already on the account
-dial number purchase \
-  --inbound-instruction "You are the support line for …" \
-  --explicit-programmatic-consent "<account-holder consent attestation>"
-```
-
-`--inbound-instruction` is the system prompt Dial's AI receptionist uses for
-voice calls to *this* number; change it later with `dial number set <number>
---inbound-instruction "…"`.
-
-**2. Wire it as a public line (host service running).** No pairing is needed —
-the install already has an owner, and the line is public:
-
-```bash
-ncl messaging-groups create --channel-type dial --platform-id "+1NEWNUMBER" --name "<label>"
-ncl wirings create --messaging-group-id <new-mg-id> --agent-group-id <ag-id>
-```
-
-`unknown_sender_policy` defaults to `public` and `threads` to on from the
-adapter declaration, so anyone can reach the new number and each texter gets
-their own thread. Point it at the same agent group as your first line, or a
-different one for a separate persona. (`/manage-channels` walks the same two
-commands if you'd rather be guided.)
-
-**3. Restart NanoClaw**, then text or call the new number — it reaches the
-agent as a separate line, and replies go out from that number.
 
 ## Next Steps
 
