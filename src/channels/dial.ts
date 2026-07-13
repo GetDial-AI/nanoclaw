@@ -1,0 +1,538 @@
+/**
+ * Dial channel adapter for NanoClaw v2.
+ *
+ * Dial (https://getdial.ai) gives an agent a real phone number — SMS and
+ * AI-handled voice calls. This is a native adapter (no Chat SDK bridge):
+ *
+ *   - Outbound uses the official `@getdial/sdk` (`DialClient.sendMessage`),
+ *     sending as the account's auto-provisioned number.
+ *   - Inbound uses the documented **CLI command-target** pattern
+ *     (docs.getdial.ai/integrations/agent-clients/nanoclaw). NanoClaw has no
+ *     inbound HTTP webhook, so instead of a local server we register a small
+ *     handler script with Dial's `listen` daemon. For every account event the
+ *     daemon runs the handler with the event JSON as its final positional
+ *     argument; the handler spools the event to a directory this adapter
+ *     watches. Each `message.received` / `call.ended` becomes an InboundMessage
+ *     routed through the normal entity model, so replies flow back out via
+ *     `deliver()` → the SDK → SMS.
+ *
+ * Credentials come from Dial's own auth file (`~/.local/share/dial/auth.v1.json`,
+ * written by `dial signup` + `dial onboard`), or from DIAL_API_KEY /
+ * DIAL_FROM_NUMBER env overrides. If neither yields an API key the factory
+ * returns null and the channel is skipped.
+ */
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import { homedir } from 'node:os';
+import path from 'node:path';
+
+import { DialClient } from '@getdial/sdk';
+
+import type { ChannelAdapter, ChannelDefaults, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
+import { registerChannelAdapter } from './channel-registry.js';
+import { DATA_DIR } from '../config.js';
+import { readEnvFile } from '../env.js';
+import { log } from '../log.js';
+
+const DEFAULT_BASE_URL = 'https://api.getdial.ai';
+
+/** Longest single SMS/MMS body we send in one shot; longer text is chunked. */
+const MAX_CHUNK = 1500;
+
+/** How long a seen event id stays in the dedup window (the listen daemon
+ *  retries a failed handler invocation once, which can double-deliver). */
+const DEDUP_TTL_MS = 5 * 60_000;
+
+// ---------------------------------------------------------------------------
+// Dial listen-daemon event envelope (subset we consume). Mirrors the shapes
+// documented at docs.getdial.ai/documentation/cli/listen-service and the
+// @getdial/sdk `DialEvent` types.
+// ---------------------------------------------------------------------------
+
+interface DialEventEnvelope {
+  id?: string;
+  object?: string;
+  type?: string;
+  createdAt?: string;
+  data?: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Config resolution
+// ---------------------------------------------------------------------------
+
+interface DialAuth {
+  apiKey?: string;
+  phoneNumber?: string;
+}
+
+/** Path to Dial's auth file, honoring XDG_DATA_HOME then $HOME/.local/share. */
+function defaultAuthFilePath(): string {
+  const base = process.env.XDG_DATA_HOME || path.join(homedir(), '.local', 'share');
+  return path.join(base, 'dial', 'auth.v1.json');
+}
+
+function readDialAuth(authFile: string): DialAuth {
+  try {
+    const raw = fs.readFileSync(authFile, 'utf8');
+    const parsed = JSON.parse(raw) as DialAuth;
+    return { apiKey: parsed.apiKey, phoneNumber: parsed.phoneNumber };
+  } catch {
+    return {};
+  }
+}
+
+interface DialConfig {
+  apiKey: string;
+  baseUrl: string;
+  fromNumber: string;
+  cliPath: string;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function chunkText(text: string, limit: number): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= limit) {
+      chunks.push(remaining);
+      break;
+    }
+    let splitAt = remaining.lastIndexOf('\n', limit);
+    if (splitAt <= 0) splitAt = limit;
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt).replace(/^\n/, '');
+  }
+  return chunks;
+}
+
+const CONTENT_TYPES: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  pdf: 'application/pdf',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  mp4: 'video/mp4',
+  txt: 'text/plain',
+};
+
+function inferContentType(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+  return CONTENT_TYPES[ext] ?? 'application/octet-stream';
+}
+
+/**
+ * The handler script Dial's listen daemon runs per event. It spools the event
+ * JSON (the daemon passes it as the final positional argument) into a directory
+ * this adapter watches. Written atomically (temp + rename) so the watcher never
+ * reads a partial file. Runs with a clean env (only PATH + HOME), so the spool
+ * dir is baked in as an absolute path.
+ */
+function handlerScript(spoolDir: string): string {
+  return `#!/usr/bin/env bash
+# Auto-generated by NanoClaw's Dial channel adapter (src/channels/dial.ts).
+# Registered as a Dial CLI command target — see:
+#   https://docs.getdial.ai/integrations/methods/cli-command-target
+# For each account event the listen daemon runs this with the event JSON as the
+# final positional argument. We spool it to a directory the adapter watches;
+# there is no local HTTP endpoint.
+set -euo pipefail
+[ "$#" -eq 0 ] && exit 0
+spool=${JSON.stringify(spoolDir)}
+mkdir -p "$spool"
+event="\${!#}"   # value of the last positional parameter = the event JSON
+tmp="$spool/.tmp.$$.\${RANDOM}"
+printf '%s' "$event" > "$tmp"
+mv -f "$tmp" "$spool/$(date +%s).$$.\${RANDOM}.json"
+exit 0
+`;
+}
+
+// ---------------------------------------------------------------------------
+// Adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * Dial models every conversation as a 1:1 exchange between the account's number
+ * and a remote number — there are no group chats. So every inbound is a DM
+ * (isGroup:false, isMention:true) and mentions are 'dm-only'. The group context
+ * mirrors dm defaults purely so nothing is undefined; it never fires. Unknown
+ * senders default to 'request_approval': anyone can text a phone number, so a
+ * cold inbound (a stray SMS, a 2FA code from a service) asks before engaging.
+ */
+const DIAL_DEFAULTS: ChannelDefaults = {
+  dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'request_approval' },
+  group: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'request_approval' },
+  mentions: 'dm-only',
+};
+
+export function createDialAdapter(config: DialConfig): ChannelAdapter {
+  const client = new DialClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
+  const spoolDir = path.join(DATA_DIR, 'dial', 'inbound');
+  const handlerPath = path.join(DATA_DIR, 'dial', 'handle-dial-event.sh');
+
+  let setup: ChannelSetup | null = null;
+  let connected = false;
+  let watcher: fs.FSWatcher | null = null;
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let draining = false;
+  const seen = new Map<string, number>();
+
+  function markSeen(id: string): boolean {
+    const now = Date.now();
+    for (const [k, ts] of seen) {
+      if (now - ts > DEDUP_TTL_MS) seen.delete(k);
+    }
+    if (seen.has(id)) return false;
+    seen.set(id, now);
+    return true;
+  }
+
+  // -- inbound: spool → route --------------------------------------------
+
+  function routeMessageReceived(env: DialEventEnvelope): void {
+    if (!setup) return;
+    const data = env.data ?? {};
+    if (data.source && data.source !== 'external') {
+      log.debug('Dial: skipping non-external message', { source: data.source });
+      return;
+    }
+    const from = typeof data.from === 'string' ? data.from : '';
+    if (!from) return;
+    const channel = typeof data.channel === 'string' ? data.channel : 'sms';
+
+    let text = typeof data.body === 'string' ? data.body : '';
+    const media = Array.isArray(data.media) ? (data.media as Array<Record<string, unknown>>) : [];
+    const attachmentRefs: Array<{ url: string; contentType: string }> = [];
+    for (const m of media) {
+      const url = typeof m.url === 'string' ? m.url : '';
+      if (!url) continue;
+      const contentType = typeof m.contentType === 'string' ? m.contentType : 'application/octet-stream';
+      const line = `[Media: ${url}]`;
+      text = text ? `${text}\n${line}` : line;
+      attachmentRefs.push({ url, contentType });
+    }
+    if (!text && attachmentRefs.length === 0) return;
+
+    const messageId = typeof data.messageId === 'string' ? data.messageId : env.id || String(Date.now());
+    const msg: InboundMessage = {
+      id: messageId,
+      kind: 'chat',
+      content: {
+        text,
+        sender: from,
+        senderId: `dial:${from}`,
+        senderName: from,
+        channel,
+        ...(attachmentRefs.length > 0 ? { attachments: attachmentRefs } : {}),
+      },
+      isMention: true,
+      isGroup: false,
+      timestamp: env.createdAt || new Date().toISOString(),
+    };
+    setup.onMetadata(from, from, false);
+    void Promise.resolve(setup.onInbound(from, null, msg)).catch((err) =>
+      log.error('Dial: onInbound failed', { from, err }),
+    );
+    log.info('Dial message received', { from, channel });
+  }
+
+  function routeCallEnded(env: DialEventEnvelope): void {
+    if (!setup) return;
+    const data = env.data ?? {};
+    const direction = data.direction === 'outbound' ? 'outbound' : 'inbound';
+    const peer = direction === 'inbound' ? data.from : data.to;
+    if (typeof peer !== 'string' || !peer) return;
+
+    const callId = typeof data.callId === 'string' ? data.callId : env.id || '';
+    const status = typeof data.status === 'string' ? data.status : 'ended';
+    const canceled = data.canceled === true;
+    const duration = typeof data.durationSeconds === 'number' ? data.durationSeconds : null;
+    const transcriptAvailable = data.transcriptAvailable === true;
+
+    const parts = [
+      `[Voice call ${direction} ${status}${canceled ? ' (canceled)' : ''}`,
+      duration != null ? `, ${duration}s` : '',
+      '.',
+      transcriptAvailable && callId ? ` Transcript available — run \`dial call get ${callId}\` to read it.` : '',
+      ']',
+    ];
+    const text = parts.join('');
+
+    const msg: InboundMessage = {
+      id: callId || String(Date.now()),
+      kind: 'chat',
+      content: { text, sender: peer, senderId: `dial:${peer}`, senderName: peer, channel: 'call' },
+      isMention: true,
+      isGroup: false,
+      timestamp: env.createdAt || new Date().toISOString(),
+    };
+    setup.onMetadata(peer, peer, false);
+    void Promise.resolve(setup.onInbound(peer, null, msg)).catch((err) =>
+      log.error('Dial: onInbound (call) failed', { peer, err }),
+    );
+    log.info('Dial call event received', { peer, direction, status });
+  }
+
+  function routeEvent(env: DialEventEnvelope): void {
+    const id = env.id;
+    if (id && !markSeen(id)) {
+      log.debug('Dial: duplicate event dropped', { id });
+      return;
+    }
+    switch (env.type) {
+      case 'message.received':
+        routeMessageReceived(env);
+        break;
+      case 'call.ended':
+        routeCallEnded(env);
+        break;
+      default:
+        log.debug('Dial: ignoring event type', { type: env.type });
+    }
+  }
+
+  function processSpoolFile(file: string): void {
+    const full = path.join(spoolDir, file);
+    let raw: string;
+    try {
+      raw = fs.readFileSync(full, 'utf8');
+    } catch {
+      return; // already consumed by a concurrent tick
+    }
+    try {
+      fs.unlinkSync(full);
+    } catch {
+      /* best-effort */
+    }
+    if (!raw.trim()) return;
+    let env: DialEventEnvelope;
+    try {
+      env = JSON.parse(raw) as DialEventEnvelope;
+    } catch (err) {
+      log.warn('Dial: unparseable spooled event', { file, err });
+      return;
+    }
+    routeEvent(env);
+  }
+
+  /** Drain the spool directory once, in filename (roughly chronological) order. */
+  function drainSpool(): void {
+    if (draining) return;
+    draining = true;
+    try {
+      const files = fs
+        .readdirSync(spoolDir)
+        .filter((f) => f.endsWith('.json'))
+        .sort();
+      for (const f of files) processSpoolFile(f);
+    } catch (err) {
+      // ENOENT is normal before the first event lands; anything else is worth a note.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        log.debug('Dial: spool drain error', { err });
+      }
+    } finally {
+      draining = false;
+    }
+  }
+
+  // -- command-target / listen-daemon wiring ------------------------------
+
+  function runDial(args: string[]): string {
+    return execFileSync(config.cliPath, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 15_000,
+    });
+  }
+
+  /**
+   * Best-effort: (re)write the handler script and register it as a Dial CLI
+   * command target, and warn if the listen daemon isn't running. All failures
+   * are logged, never thrown — the wizard/installer normally establishes this,
+   * and the adapter keeps watching the spool regardless.
+   */
+  function ensureCommandTarget(): void {
+    try {
+      fs.mkdirSync(path.dirname(handlerPath), { recursive: true });
+      fs.writeFileSync(handlerPath, handlerScript(spoolDir), { mode: 0o755 });
+      fs.chmodSync(handlerPath, 0o755);
+    } catch (err) {
+      log.warn('Dial: could not write command-target handler', { handlerPath, err });
+      return;
+    }
+    try {
+      execFileSync('which', [config.cliPath], { stdio: 'ignore' });
+    } catch {
+      log.warn(
+        'Dial: `dial` CLI not found on PATH — inbound events will not be delivered until the listen daemon is set up',
+        {
+          cliPath: config.cliPath,
+        },
+      );
+      return;
+    }
+    try {
+      const doctor = JSON.parse(runDial(['doctor', '--json'])) as { listen?: { running?: boolean } };
+      if (!doctor.listen?.running) {
+        log.warn('Dial: listen daemon is not running — run `dial listen install` so inbound events reach NanoClaw');
+      }
+    } catch (err) {
+      log.debug('Dial: doctor check failed', { err });
+    }
+    try {
+      const listed = runDial(['local-target', 'list', '--json']);
+      if (!listed.includes(handlerPath)) {
+        runDial(['local-target', 'add', 'cmd', handlerPath]);
+        log.info('Dial: registered CLI command target', { handlerPath });
+      }
+    } catch (err) {
+      log.warn('Dial: could not register command target — set it up with `dial local-target add cmd <handler>`', {
+        handlerPath,
+        err,
+      });
+    }
+  }
+
+  // -- adapter ------------------------------------------------------------
+
+  const adapter: ChannelAdapter = {
+    name: 'dial',
+    channelType: 'dial',
+    supportsThreads: false,
+    defaults: DIAL_DEFAULTS,
+
+    async setup(cfg: ChannelSetup): Promise<void> {
+      setup = cfg;
+      fs.mkdirSync(spoolDir, { recursive: true });
+      ensureCommandTarget();
+
+      // Drain anything spooled while we were down, then watch for new events.
+      drainSpool();
+      try {
+        watcher = fs.watch(spoolDir, () => drainSpool());
+      } catch (err) {
+        log.debug('Dial: fs.watch unavailable, relying on poll', { err });
+      }
+      // Poll fallback — fs.watch misses events on some platforms/mounts.
+      pollTimer = setInterval(drainSpool, 2000);
+
+      connected = true;
+      log.info('Dial channel connected', { fromNumber: config.fromNumber });
+    },
+
+    async teardown(): Promise<void> {
+      connected = false;
+      if (watcher) {
+        try {
+          watcher.close();
+        } catch {
+          /* ignore */
+        }
+        watcher = null;
+      }
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      log.info('Dial channel disconnected');
+    },
+
+    isConnected(): boolean {
+      return connected;
+    },
+
+    async deliver(platformId: string, _threadId: string | null, message: OutboundMessage): Promise<string | undefined> {
+      const content = message.content as Record<string, unknown> | string | undefined;
+      let text: string | null = null;
+      if (typeof content === 'string') {
+        text = content;
+      } else if (content && typeof content === 'object' && typeof content.text === 'string') {
+        text = content.text;
+      }
+      const files = message.files ?? [];
+
+      let lastId: string | undefined;
+      if (text) {
+        const chunks = text.length <= MAX_CHUNK ? [text] : chunkText(text, MAX_CHUNK);
+        for (const chunk of chunks) {
+          try {
+            const sent = await client.sendMessage({ to: platformId, fromNumber: config.fromNumber, body: chunk });
+            lastId = sent?.id ?? lastId;
+          } catch (err) {
+            log.error('Dial: sendMessage failed', { platformId, err });
+          }
+        }
+      }
+
+      if (files.length > 0) {
+        // Dial caps a send at 10 media items; batch accordingly.
+        for (let i = 0; i < files.length; i += 10) {
+          const batch = files.slice(i, i + 10);
+          try {
+            const sent = await client.sendMessage({
+              to: platformId,
+              fromNumber: config.fromNumber,
+              media: batch.map((f) => ({
+                data: new Uint8Array(f.data),
+                contentType: inferContentType(f.filename),
+                filename: f.filename,
+              })),
+            });
+            lastId = sent?.id ?? lastId;
+          } catch (err) {
+            log.error('Dial: media send failed', { platformId, count: batch.length, err });
+          }
+        }
+      }
+
+      return lastId;
+    },
+
+    async setTyping(platformId: string, _threadId: string | null): Promise<void> {
+      try {
+        await client.startTyping({ toNumber: platformId, fromNumber: config.fromNumber });
+      } catch (err) {
+        log.debug('Dial: typing indicator failed', { platformId, err });
+      }
+    },
+  };
+
+  return adapter;
+}
+
+// ---------------------------------------------------------------------------
+// Self-registration
+// ---------------------------------------------------------------------------
+
+registerChannelAdapter('dial', {
+  factory: () => {
+    const env = readEnvFile(['DIAL_API_KEY', 'DIAL_FROM_NUMBER', 'DIAL_BASE_URL', 'DIAL_AUTH_FILE', 'DIAL_CLI_PATH']);
+
+    const authFile = process.env.DIAL_AUTH_FILE || env.DIAL_AUTH_FILE || defaultAuthFilePath();
+    const auth = readDialAuth(authFile);
+
+    const apiKey = process.env.DIAL_API_KEY || env.DIAL_API_KEY || auth.apiKey || '';
+    if (!apiKey) {
+      log.debug('Dial: no API key (run `dial signup` + `dial onboard`, or set DIAL_API_KEY), skipping channel');
+      return null;
+    }
+
+    const fromNumber = process.env.DIAL_FROM_NUMBER || env.DIAL_FROM_NUMBER || auth.phoneNumber || '';
+    if (!fromNumber) {
+      log.warn('Dial: no from-number resolved — set DIAL_FROM_NUMBER or run `dial onboard` to provision one');
+    }
+
+    const baseUrl = process.env.DIAL_BASE_URL || env.DIAL_BASE_URL || DEFAULT_BASE_URL;
+    const cliPath = process.env.DIAL_CLI_PATH || env.DIAL_CLI_PATH || 'dial';
+
+    return createDialAdapter({ apiKey, baseUrl, fromNumber, cliPath });
+  },
+  defaults: DIAL_DEFAULTS,
+});
