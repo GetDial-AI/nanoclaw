@@ -2,20 +2,25 @@
  * Dial channel adapter for NanoClaw v2.
  *
  * Dial (https://getdial.ai) gives an agent a real phone number — SMS and
- * AI-handled voice calls. Native adapter (no Chat SDK bridge):
+ * AI-handled voice calls. Native adapter (no Chat SDK bridge).
  *
  *   - Outbound SMS via the official `@getdial/sdk` (`DialClient.sendMessage`).
  *   - Inbound via Dial's documented CLI command-target
- *     (docs.getdial.ai/integrations/agent-clients/nanoclaw). NanoClaw has no
- *     inbound HTTP webhook, so the adapter registers a small handler script
- *     with Dial's `listen` daemon; the daemon runs it per event with the event
- *     JSON as the final arg, the handler spools it to a directory the adapter
- *     watches, and `message.received` / `call.ended` route through the normal
- *     entity model so replies flow back out over SMS.
+ *     (docs.getdial.ai/integrations/agent-clients/nanoclaw): the `dial listen`
+ *     daemon runs a spool handler per event; the adapter watches the spool
+ *     directory and routes each event.
  *
- * The API key + from-number come from Dial's auth file (written by `dial
- * onboard`). If there's no key the factory returns null and the channel is
- * skipped.
+ * PUBLIC-LINE MODEL. The Dial number is one shared conversation (a single
+ * messaging group whose platform_id is the number itself), and each remote
+ * correspondent is a THREAD inside it (threadId = their E.164). One wiring +
+ * `unknown_sender_policy: 'public'` therefore lets anyone text/call the number
+ * and reach the agent with no per-sender approval, while replies still route
+ * to the right person via their thread. Ownership is bootstrapped by a pairing
+ * code (see dial-pairing.ts): the operator texts a 4-digit code to the number,
+ * the interceptor records their number as owner before it reaches an agent.
+ *
+ * Credentials come from Dial's auth file (written by `dial onboard`). If
+ * there's no key the factory returns null and the channel is skipped.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -26,9 +31,12 @@ import { DialClient } from '@getdial/sdk';
 
 import type { ChannelAdapter, ChannelDefaults, ChannelSetup, InboundMessage, OutboundMessage } from './adapter.js';
 import { registerChannelAdapter } from './channel-registry.js';
+import { tryConsume } from './dial-pairing.js';
 import { DATA_DIR } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
+import { grantRole, hasAnyOwner } from '../modules/permissions/db/user-roles.js';
+import { upsertUser } from '../modules/permissions/db/users.js';
 
 /** Longest SMS body sent in one shot; longer text is chunked. */
 const MAX_CHUNK = 1500;
@@ -46,7 +54,7 @@ interface DialEventEnvelope {
 
 interface DialConfig {
   apiKey: string;
-  /** E.164 to send from; '' → let the server use the account's default number. */
+  /** The account's Dial number (E.164). Used as the shared line's platform_id. */
   fromNumber: string;
   cliPath: string;
 }
@@ -70,9 +78,8 @@ function chunkText(text: string, limit: number): string[] {
 /**
  * The handler script Dial's listen daemon runs per event: it spools the event
  * JSON (passed as the final positional argument) into a directory the adapter
- * watches, written atomically (temp + rename) so the watcher never reads a
- * partial file. Runs with a clean env (PATH + HOME only), so the spool dir is
- * baked in as an absolute path.
+ * watches, written atomically (temp + rename). Runs with a clean env (PATH +
+ * HOME only), so the spool dir is baked in as an absolute path.
  */
 function handlerScript(spoolDir: string): string {
   return `#!/usr/bin/env bash
@@ -91,14 +98,13 @@ exit 0
 }
 
 /**
- * Dial has no group chats: every conversation is 1:1 between the account's
- * number and a remote number, so every inbound is a DM (isMention:true,
- * isGroup:false) and mentions are 'dm-only'. Unknown senders default to
- * 'request_approval' — anyone can text a phone number.
+ * Public line: the number is one shared, threaded conversation. `public`
+ * admits every sender (no per-sender approval); `threads: true` gives each
+ * correspondent their own thread/session so replies route back correctly.
  */
 const DIAL_DEFAULTS: ChannelDefaults = {
-  dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'request_approval' },
-  group: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'request_approval' },
+  dm: { engageMode: 'pattern', engagePattern: '.', threads: true, unknownSenderPolicy: 'public' },
+  group: { engageMode: 'pattern', engagePattern: '.', threads: true, unknownSenderPolicy: 'public' },
   mentions: 'dm-only',
 };
 
@@ -106,6 +112,9 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   const client = new DialClient({ apiKey: config.apiKey });
   const spoolDir = path.join(DATA_DIR, 'dial', 'inbound');
   const handlerPath = path.join(DATA_DIR, 'dial', 'handle-dial-event.sh');
+  // The shared line's platform_id. Falls back to the sender if somehow unset
+  // (degrades to per-sender conversations rather than breaking).
+  const line = config.fromNumber;
 
   let setup: ChannelSetup | null = null;
   let connected = false;
@@ -114,7 +123,6 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   let draining = false;
   const seen = new Map<string, number>();
 
-  /** True if this event id was already routed within the dedup window. */
   function seenBefore(id: string): boolean {
     const now = Date.now();
     for (const [k, ts] of seen) if (now - ts > DEDUP_TTL_MS) seen.delete(k);
@@ -123,8 +131,54 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
     return false;
   }
 
-  /** Route one inbound event — SMS text and ended-call notifications only. */
-  function routeEvent(env: DialEventEnvelope): void {
+  async function sendSms(to: string, body: string): Promise<string | undefined> {
+    let lastId: string | undefined;
+    for (const chunk of body.length <= MAX_CHUNK ? [body] : chunkText(body, MAX_CHUNK)) {
+      const sent = await client.sendMessage({
+        to,
+        body: chunk,
+        ...(config.fromNumber ? { fromNumber: config.fromNumber } : {}),
+      });
+      lastId = sent?.id ?? lastId;
+    }
+    return lastId;
+  }
+
+  /**
+   * Pairing interceptor: if an inbound SMS body is exactly a pending 4-digit
+   * code, consume it — record the sender's number, promote to owner if the
+   * install has none yet, confirm by SMS — and swallow the message so it never
+   * reaches an agent. Returns true when consumed.
+   */
+  async function consumePairing(fromNumber: string, text: string): Promise<boolean> {
+    let consumed;
+    try {
+      consumed = await tryConsume({ text, fromNumber });
+    } catch (err) {
+      log.warn('Dial: pairing consume failed', { err });
+      return false;
+    }
+    if (!consumed) return false;
+
+    const now = new Date().toISOString();
+    const userId = `dial:${fromNumber}`;
+    upsertUser({ id: userId, kind: 'dial', display_name: null, created_at: now });
+    let promoted = false;
+    if (!hasAnyOwner()) {
+      grantRole({ user_id: userId, role: 'owner', agent_group_id: null, granted_by: null, granted_at: now });
+      promoted = true;
+    }
+    log.info('Dial pairing accepted', { fromNumber, promotedToOwner: promoted });
+    try {
+      await sendSms(fromNumber, 'Paired ✅ — your NanoClaw assistant is set up. Text me anytime.');
+    } catch (err) {
+      log.warn('Dial: pairing confirmation SMS failed', { err });
+    }
+    return true;
+  }
+
+  /** Route one inbound event — SMS text and ended-call notifications. */
+  async function routeEvent(env: DialEventEnvelope): Promise<void> {
     if (!setup) return;
     if (env.id && seenBefore(env.id)) return;
     const data = env.data ?? {};
@@ -135,6 +189,8 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       if (data.source && data.source !== 'external') return; // ignore Dial-synthesized test SMS
       peer = typeof data.from === 'string' ? data.from : '';
       text = typeof data.body === 'string' ? data.body : '';
+      // Pairing codes are consumed before any agent sees them.
+      if (peer && (await consumePairing(peer, text))) return;
     } else if (env.type === 'call.ended') {
       const outbound = data.direction === 'outbound';
       const other = outbound ? data.to : data.from;
@@ -150,6 +206,11 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
     if (!peer || !text) return;
 
     const id = [data.messageId, data.callId, env.id].find((v): v is string => typeof v === 'string' && !!v);
+    // Public-line model: the number itself is the messaging group; the peer is
+    // the thread, so replies route back to them and every sender shares one
+    // (public) wiring.
+    const platformId = line || peer;
+    const threadId = line ? peer : null;
     const msg: InboundMessage = {
       id: id ?? peer,
       kind: 'chat',
@@ -158,7 +219,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       isGroup: false,
       timestamp: env.createdAt || new Date().toISOString(),
     };
-    void Promise.resolve(setup.onInbound(peer, null, msg)).catch((err) =>
+    void Promise.resolve(setup.onInbound(platformId, threadId, msg)).catch((err) =>
       log.error('Dial: onInbound failed', { peer, err }),
     );
     log.info('Dial inbound routed', { peer, type: env.type });
@@ -178,11 +239,14 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       /* best-effort */
     }
     if (!raw.trim()) return;
+    let env: DialEventEnvelope;
     try {
-      routeEvent(JSON.parse(raw) as DialEventEnvelope);
+      env = JSON.parse(raw) as DialEventEnvelope;
     } catch (err) {
       log.warn('Dial: unparseable spooled event', { file, err });
+      return;
     }
+    void routeEvent(env).catch((err) => log.error('Dial: routeEvent failed', { err }));
   }
 
   /** Drain the spool directory once, in filename (roughly chronological) order. */
@@ -206,7 +270,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   /**
    * Best-effort: write the handler script and register it as a Dial CLI command
    * target. Failures are logged, never thrown — the adapter keeps watching the
-   * spool regardless, and the wizard/skill can establish this out of band.
+   * spool, and the wizard/skill can establish this out of band.
    */
   function ensureCommandTarget(): void {
     try {
@@ -237,7 +301,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
   const adapter: ChannelAdapter = {
     name: 'dial',
     channelType: 'dial',
-    supportsThreads: false,
+    supportsThreads: true,
     defaults: DIAL_DEFAULTS,
 
     async setup(cfg: ChannelSetup): Promise<void> {
@@ -254,7 +318,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       pollTimer = setInterval(drainSpool, 2000); // fallback — fs.watch misses events on some mounts
 
       connected = true;
-      log.info('Dial channel connected', { fromNumber: config.fromNumber || '(account default)' });
+      log.info('Dial channel connected', { line: config.fromNumber || '(account default)' });
     },
 
     async teardown(): Promise<void> {
@@ -270,7 +334,7 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
       return connected;
     },
 
-    async deliver(platformId: string, _threadId: string | null, message: OutboundMessage): Promise<string | undefined> {
+    async deliver(platformId: string, threadId: string | null, message: OutboundMessage): Promise<string | undefined> {
       const content = message.content as Record<string, unknown> | string | undefined;
       const text =
         typeof content === 'string'
@@ -280,20 +344,19 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
             : '';
       if (!text) return undefined;
 
-      let lastId: string | undefined;
-      for (const chunk of text.length <= MAX_CHUNK ? [text] : chunkText(text, MAX_CHUNK)) {
-        try {
-          const sent = await client.sendMessage({
-            to: platformId,
-            body: chunk,
-            ...(config.fromNumber ? { fromNumber: config.fromNumber } : {}),
-          });
-          lastId = sent?.id ?? lastId;
-        } catch (err) {
-          log.error('Dial: sendMessage failed', { platformId, err });
-        }
+      // Public-line model: the correspondent is the thread. Reply to threadId;
+      // platformId is the shared line. Never text the line's own number.
+      const recipient = threadId || platformId;
+      if (!recipient || recipient === config.fromNumber) {
+        log.warn('Dial: no reply recipient (no thread) — dropping outbound', { platformId, threadId });
+        return undefined;
       }
-      return lastId;
+      try {
+        return await sendSms(recipient, text);
+      } catch (err) {
+        log.error('Dial: sendMessage failed', { recipient, err });
+        return undefined;
+      }
     },
   };
 
