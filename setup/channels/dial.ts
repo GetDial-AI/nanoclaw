@@ -37,7 +37,7 @@ export async function runDialChannel(displayName: string): Promise<void> {
   const cliPath = await ensureDialCli();
 
   await ensureSignedIn(cliPath);
-  const lineNumber = confirmProvisionedNumber(cliPath);
+  const lineNumber = await confirmProvisionedNumber(cliPath);
 
   const install = await runQuietChild('dial-install', 'bash', ['setup/add-dial.sh'], {
     running: 'Installing the Dial adapter…',
@@ -437,16 +437,27 @@ interface NumberListResponse {
 }
 
 /** Show + return the account's Dial number (the public line). Null if unreadable. */
-function confirmProvisionedNumber(cliPath: string): string | null {
+async function confirmProvisionedNumber(cliPath: string): Promise<string | null> {
   const list = dialJson<NumberListResponse>(cliPath, ['number', 'list']);
   const numbers = list?.numbers?.map((n) => n.number).filter((n): n is string => !!n) ?? [];
   if (numbers.length === 0) return null; // couldn't read one back; adapter uses the account default
-  p.note(
-    [`Your agent's public line:`, '', ...numbers.map((n) => `  ${accentGreen(n)}`)].join('\n'),
-    'Your Dial number',
-  );
-  setupLog.step('dial-number', 'success', 0, { NUMBERS: numbers.join(',') });
-  return numbers[0];
+
+  // With multiple numbers on the account, let the operator choose which one the
+  // agent's public line should be — the pick drives the pairing QR + wiring
+  // below. A single number needs no prompt.
+  const chosen =
+    numbers.length === 1
+      ? numbers[0]
+      : ensureAnswer(
+          await p.select({
+            message: 'Which number should be your agent’s public line?',
+            options: numbers.map((n) => ({ value: n, label: n })),
+          }),
+        );
+
+  p.note([`Your agent's public line:`, '', `  ${accentGreen(chosen)}`].join('\n'), 'Your Dial number');
+  setupLog.step('dial-number', 'success', 0, { NUMBERS: numbers.join(','), CHOSEN: chosen });
+  return chosen;
 }
 
 function ensureListenDaemon(cliPath: string): void {
