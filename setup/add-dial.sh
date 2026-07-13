@@ -95,6 +95,16 @@ pnpm install "${SDK_VERSION}" >&2 2>/dev/null || {
   exit 1
 }
 
+# qrcode renders the pairing QR (an SMSTO: link) as terminal art in the wizard.
+# Idempotent — a no-op if a prior channel (Signal/WhatsApp) already installed it.
+if ! node -e "require.resolve('qrcode')" >/dev/null 2>&1; then
+  log "Installing qrcode@1.5.4…"
+  pnpm install qrcode@1.5.4 @types/qrcode@1.5.6 >&2 2>/dev/null || {
+    emit_status failed "pnpm install qrcode failed"
+    exit 1
+  }
+fi
+
 log "Building…"
 pnpm run build >&2 2>/dev/null || {
   emit_status failed "pnpm run build failed"

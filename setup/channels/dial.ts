@@ -112,6 +112,21 @@ export async function runDialChannel(displayName: string): Promise<void> {
 }
 
 /**
+ * Render an SMSTO: URI as terminal-art QR lines. `qrcode` is installed by
+ * setup/add-dial.sh (dynamic import so setup-module load doesn't need it).
+ * Returns [] on any failure so the caller falls back to the plain code.
+ */
+async function renderSmsQr(uri: string): Promise<string[]> {
+  try {
+    const QRCode = await import('qrcode');
+    const art = await QRCode.toString(uri, { type: 'terminal', small: true });
+    return art.trimEnd().split('\n');
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Pairing step: mint a 4-digit code, ask the operator to text it to the Dial
  * number, and wait for the running adapter to consume it (shared JSON file
  * under data/). Returns the paired sender's E.164. Uses a dynamic import
@@ -122,15 +137,33 @@ async function runPairing(lineNumber: string | null): Promise<string> {
   const { createPairing, waitForPairing } = await import('../../src/channels/dial-pairing.js');
   const rec = await createPairing();
   const target = lineNumber ?? 'your Dial number';
-  p.note(
-    [
-      `   ${accentGreen(rec.code.split('').join('  '))}`,
-      '',
-      `From the phone you want to use, text ${k.bold('only these 4 digits')} to ${k.bold(target)}.`,
-      k.dim('This proves the number is yours; you become the owner.'),
-    ].join('\n'),
-    'Pairing code',
-  );
+
+  // Prefer a scannable QR: it encodes an SMSTO: link so the phone camera opens
+  // Messages pre-filled with the code + recipient — the operator just taps Send.
+  // Falls back to the plain code if there's no number or QR rendering fails.
+  const qrLines = lineNumber ? await renderSmsQr(`SMSTO:${lineNumber}:${rec.code}`) : [];
+  if (qrLines.length > 0) {
+    p.note(
+      [
+        ...qrLines,
+        '',
+        `Scan with your phone camera — it opens Messages pre-filled to ${k.bold(target)}.`,
+        `Just press ${k.bold('Send')}. (The message is the code ${accentGreen(rec.code)}.)`,
+        k.dim(`Can't scan? Text ${rec.code} to ${target} yourself.`),
+      ].join('\n'),
+      'Scan to pair',
+    );
+  } else {
+    p.note(
+      [
+        `   ${accentGreen(rec.code.split('').join('  '))}`,
+        '',
+        `From the phone you want to use, text ${k.bold('only these 4 digits')} to ${k.bold(target)}.`,
+        k.dim('This proves the number is yours; you become the owner.'),
+      ].join('\n'),
+      'Pairing code',
+    );
+  }
   setupLog.userInput('dial_pairing_code_issued', rec.code);
 
   const s = p.spinner();
