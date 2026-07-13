@@ -53,26 +53,10 @@ export async function runDialChannel(displayName: string): Promise<void> {
   ensureListenDaemon(cliPath);
   await restartService();
 
-  // Optional: wire the operator's own number as a first DM. Skipping is fine —
-  // Dial is a public line, so new senders get a one-tap "Connect to Nano?" on
-  // first contact (or you wire via /manage-channels). Providing a number just
-  // pre-wires your own DM so your texts work instantly + you get a welcome SMS.
-  const operatorPhone = await askOperatorPhone();
-  if (!operatorPhone) {
-    p.note(
-      [
-        'Dial is connected. Nothing is wired to an agent yet — the first time a number',
-        'texts or calls your line, the owner gets a one-tap "Connect to Nano?" to link it',
-        '(or wire it anytime with /manage-channels).',
-      ].join('\n'),
-      'Dial connected',
-    );
-    setupLog.step('dial-wire', 'skipped', 0, {});
-    return;
-  }
-
   const role = await askOperatorRole('Dial');
   setupLog.userInput('dial_role', role);
+
+  const operatorPhone = await askOperatorPhone();
   const agentName = await resolveAgentName();
 
   const init = await runQuietChild(
@@ -336,33 +320,31 @@ async function restartService(): Promise<void> {
   }
 }
 
-async function askOperatorPhone(): Promise<string | null> {
+async function askOperatorPhone(): Promise<string> {
   p.note(
     [
-      'Optional — the phone you personally text the assistant from.',
+      'What phone number will you text your assistant from?',
       '',
-      '  • Enter it to pre-wire your own DM now (instant, plus a welcome text).',
-      '  • Leave blank to skip — new senders get a one-tap connect instead.',
+      '  • Use full international format, starting with +',
       '',
-      k.dim('Full international format, e.g. +14155551234'),
+      k.dim('Example: +14155551234'),
     ].join('\n'),
-    'Your phone number (optional)',
+    'Your phone number',
   );
   const answer = ensureAnswer(
     await p.text({
-      message: 'Your phone number (Enter to skip)',
-      placeholder: '+14155551234',
+      message: 'Your phone number',
       validate: (v) => {
         const t = (v ?? '').trim();
-        if (!t) return undefined; // blank = skip
+        if (!t) return 'Phone number is required';
         if (!/^\+[1-9]\d{6,14}$/.test(t)) return 'Use E.164 format, e.g. +14155551234';
         return undefined;
       },
     }),
   ) as string;
-  const phone = (answer ?? '').trim();
-  setupLog.userInput('dial_operator_phone', phone || '(skipped)');
-  return phone || null;
+  const phone = answer.trim();
+  setupLog.userInput('dial_operator_phone', phone);
+  return phone;
 }
 
 async function resolveAgentName(): Promise<string> {
