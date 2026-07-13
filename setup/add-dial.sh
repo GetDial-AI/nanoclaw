@@ -5,8 +5,8 @@
 # confirmation, and service restart live in setup/channels/dial.ts. This
 # script only:
 #
-#   1. Fetches src/channels/dial.ts + dial-registration.test.ts from the
-#      channels branch.
+#   1. Fetches src/channels/dial.ts + dial-registration.test.ts and the
+#      dial-cli container skill from the channels branch.
 #   2. Appends the self-registration import to src/channels/index.ts.
 #   3. Installs @getdial/sdk (pinned).
 #   4. Builds.
@@ -71,6 +71,16 @@ if need_install; then
       exit 1
     }
   done
+
+  # Bundle the dial-cli container skill (outbound tool: drive the `dial` CLI
+  # to send SMS, place calls, reconfigure the number) — the WhatsApp/Slack
+  # pattern of shipping a channel's container skill with the channel.
+  log "Copying the dial-cli container skill…"
+  mkdir -p container/skills/dial-cli
+  git show "${CHANNELS_BRANCH}:container/skills/dial-cli/SKILL.md" > container/skills/dial-cli/SKILL.md || {
+    emit_status failed "git show ${CHANNELS_BRANCH}:container/skills/dial-cli/SKILL.md failed"
+    exit 1
+  }
 
   if ! grep -q "^import './dial.js';" src/channels/index.ts; then
     echo "import './dial.js';" >> src/channels/index.ts

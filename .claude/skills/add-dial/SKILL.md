@@ -53,6 +53,7 @@ Skip to **Credentials** if all of these are already in place:
 
 - `src/channels/dial.ts` exists
 - `src/channels/dial-registration.test.ts` exists
+- `container/skills/dial-cli/SKILL.md` exists (the bundled outbound-tool skill)
 - `src/channels/index.ts` contains `import './dial.js';`
 - `@getdial/sdk` is listed in `package.json` dependencies
 
@@ -64,11 +65,15 @@ Otherwise continue. Every step below is safe to re-run.
 git fetch origin channels
 ```
 
-### 2. Copy the adapter and test
+### 2. Copy the adapter, test, and the dial-cli container skill
+
+The `dial-cli` container skill is part of the channel payload (the WhatsApp/Slack pattern): it teaches the agent to drive the `dial` CLI for **outbound** — send SMS, place AI voice calls, reconfigure the number — from any channel it's on.
 
 ```bash
 git show origin/channels:src/channels/dial.ts                    > src/channels/dial.ts
 git show origin/channels:src/channels/dial-registration.test.ts  > src/channels/dial-registration.test.ts
+mkdir -p container/skills/dial-cli
+git show origin/channels:container/skills/dial-cli/SKILL.md       > container/skills/dial-cli/SKILL.md
 ```
 
 ### 3. Append the self-registration import
