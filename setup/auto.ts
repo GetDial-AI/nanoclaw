@@ -1252,7 +1252,7 @@ async function askChannelChoice(): Promise<ChannelChoice> {
         { value: 'telegram', label: 'Yes, connect Telegram', hint: 'recommended' },
         { value: 'discord', label: 'Yes, connect Discord' },
         { value: 'whatsapp', label: 'Yes, connect WhatsApp', hint: 'best with a dedicated number' },
-        { value: 'dial', label: 'Yes, connect Dial', hint: 'voice calls, iMessage & SMS — worldwide' },
+        { value: 'dial', label: 'Yes, connect Dial', hint: 'a dedicated phone number for your agent — place calls, iMessage, SMS — worldwide' },
         {
           value: 'signal',
           label: 'Yes, connect Signal',
