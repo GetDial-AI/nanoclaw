@@ -13,6 +13,7 @@
  * unknown_sender_policy 'public' so anyone can reach the agent.
  */
 import { spawnSync } from 'child_process';
+import path from 'path';
 
 import * as p from '@clack/prompts';
 import k from 'kleur';
@@ -53,6 +54,11 @@ export async function runDialChannel(displayName: string): Promise<void> {
 
   ensureListenDaemon(cliPath);
   await restartService();
+  // Register the inbound command target from HERE, not the adapter: the host
+  // service runs under launchd/systemd with a limited PATH that often can't
+  // find `dial`, so its self-registration fails silently. The wizard has the
+  // CLI on PATH — register the handler the adapter just wrote at boot.
+  registerCommandTarget(cliPath);
 
   // WIRING via pairing: show a 4-digit code; the operator texts it to the Dial
   // number from any phone. The running adapter consumes it (recording the
@@ -170,6 +176,25 @@ function runDial(cliPath: string, args: string[]): { ok: boolean; stdout: string
     stdout: res.stdout ?? '',
     stderr: res.stderr ?? '',
   };
+}
+
+/**
+ * Register the adapter's inbound command target from the wizard. The host
+ * service's PATH (launchd/systemd) usually can't find `dial`, so the adapter's
+ * own boot-time registration fails silently — the wizard has the CLI on PATH,
+ * so it registers the handler the adapter wrote at boot. Idempotent.
+ */
+function registerCommandTarget(cliPath: string): void {
+  const handler = path.join(process.cwd(), 'data', 'dial', 'handle-dial-event.sh');
+  const listed = runDial(cliPath, ['local-target', 'list', '--json']);
+  if (listed.ok && listed.stdout.includes(handler)) return; // already registered
+  const res = runDial(cliPath, ['local-target', 'add', 'cmd', handler]);
+  setupLog.step(
+    'dial-command-target',
+    res.ok ? 'success' : 'failed',
+    0,
+    res.ok ? { HANDLER: handler } : { ERROR: (res.stderr || 'add failed').slice(0, 120) },
+  );
 }
 
 /** Run a `dial … --json` command and parse the first JSON object in stdout. */
