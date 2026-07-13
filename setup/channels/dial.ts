@@ -109,6 +109,75 @@ export async function runDialChannel(displayName: string): Promise<void> {
       'You can retry later with `/manage-channels`.',
     );
   }
+
+  // Optional, Dial-channel-only: offer the Dial container tool so the agent can
+  // send SMS / place AI calls from ANY channel it's on — not just receive and
+  // reply on this Dial line. The channel onboarding above already wrote the Dial
+  // auth file, so the installer registers the OneCLI credential with no extra
+  // auth prompt here.
+  await offerDialTool();
+}
+
+/**
+ * Optional add-on, offered only in the Dial channel flow: install the Dial
+ * container tool — the `dial` CLI baked into the agent image plus an OneCLI
+ * credential — so any agent can text/call from whatever channel it's on, not
+ * just this Dial line. The deterministic work lives in the add-dial-tool skill's
+ * `add.sh` (reused here); the channel onboarding already wrote the auth file it
+ * reads, so no extra sign-in is needed. Non-fatal: the Dial line works either way.
+ */
+async function offerDialTool(): Promise<void> {
+  p.note(
+    'Say yes so your assistant can send SMS and make AI calls for you from every channel you use it on — Telegram, WhatsApp, and more.',
+    'Add phone superpowers to your assistant?',
+  );
+  const wants = ensureAnswer(
+    await p.confirm({ message: 'Install the Dial tool now?', initialValue: true }),
+  ) as boolean;
+  setupLog.userInput('dial_tool_optin', String(wants));
+  if (!wants) return;
+
+  // The installer registers the credential via OneCLI; without it the CLI still
+  // installs but calls would 401. Skip gracefully rather than fail the wizard.
+  const hasOnecli = spawnSync('onecli', ['version'], { stdio: 'ignore' }).status === 0;
+  if (!hasOnecli) {
+    p.note(
+      [
+        'The Dial tool needs OneCLI to inject credentials, and it isn’t set up yet.',
+        'Run /init-onecli, then finish with:',
+        k.cyan('  bash .claude/skills/add-dial-tool/add.sh'),
+        'Your Dial line still works in the meantime.',
+      ].join('\n'),
+      'Skipped — OneCLI required',
+    );
+    setupLog.step('dial-tool', 'skipped', 0, { REASON: 'onecli_missing' });
+    return;
+  }
+
+  const res = await runQuietChild(
+    'dial-tool',
+    'bash',
+    ['.claude/skills/add-dial-tool/add.sh'],
+    {
+      running: 'Installing the Dial tool (rebuilding the agent image — this can take a minute)…',
+      done: 'Dial tool installed — your assistant can text and call from any channel now.',
+    },
+  );
+  if (!res.ok) {
+    p.note(
+      ['Couldn’t finish installing the Dial tool — your Dial line still works.', 'Retry later with /add-dial-tool.'].join(
+        '\n',
+      ),
+      'Heads up',
+    );
+    return;
+  }
+  if (res.terminal?.fields?.CREDENTIAL !== 'set') {
+    p.note(
+      'Installed, but no Dial credential was registered — texts/calls may return 401. Re-run `bash .claude/skills/add-dial-tool/add.sh` after signing in with the `dial` CLI.',
+      'Almost there',
+    );
+  }
 }
 
 /**
