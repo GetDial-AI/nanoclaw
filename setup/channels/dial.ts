@@ -3,13 +3,14 @@
  *
  * `runDialChannel(displayName)`: probe the `dial` CLI → reuse the signed-in
  * account or run signup(email+OTP)+onboard → confirm the auto-provisioned
- * number → install the adapter (setup/add-dial.sh) → ensure the `dial listen`
- * daemon (the adapter registers the command target itself on the next boot) →
- * restart the service → wire the first agent to the operator's phone.
+ * number → install the adapter + dial-cli skill (setup/add-dial.sh) → ensure
+ * the `dial listen` daemon → restart the service → PAIR (show a 4-digit code
+ * the operator texts to the Dial number; the running adapter consumes it and
+ * records the sender as owner) → role prompt → wire the public line.
  *
- * Dial has no group chats — every conversation is 1:1 with a remote number, so
- * the operator's own phone is both the user handle and the DM platform id, and
- * ownership comes from the Dial account auth (no pairing handshake).
+ * The Dial number is a single PUBLIC, threaded line: one messaging group
+ * (platform_id = the number) with each texter as a thread, wired once with
+ * unknown_sender_policy 'public' so anyone can reach the agent.
  */
 import { spawnSync } from 'child_process';
 
@@ -35,7 +36,7 @@ export async function runDialChannel(displayName: string): Promise<void> {
   const cliPath = await ensureDialCli();
 
   await ensureSignedIn(cliPath);
-  confirmProvisionedNumber(cliPath);
+  const lineNumber = confirmProvisionedNumber(cliPath);
 
   const install = await runQuietChild('dial-install', 'bash', ['setup/add-dial.sh'], {
     running: 'Installing the Dial adapter…',
@@ -53,12 +54,20 @@ export async function runDialChannel(displayName: string): Promise<void> {
   ensureListenDaemon(cliPath);
   await restartService();
 
+  // WIRING via pairing: show a 4-digit code; the operator texts it to the Dial
+  // number from any phone. The running adapter consumes it (recording the
+  // sender as owner) before it reaches an agent. This proves control of the
+  // sending number without asking them to type it.
+  const pairedNumber = await runPairing(lineNumber);
+
   const role = await askOperatorRole('Dial');
   setupLog.userInput('dial_role', role);
-
-  const operatorPhone = await askOperatorPhone();
   const agentName = await resolveAgentName();
 
+  // Wire the PUBLIC line: the messaging group's platform_id is the Dial number
+  // itself; each texter becomes a thread. The adapter's declared defaults set
+  // unknown_sender_policy 'public', so init-first-agent stamps the mg public —
+  // everyone can reach the agent, no per-sender approval.
   const init = await runQuietChild(
     'init-first-agent',
     'pnpm',
@@ -69,9 +78,9 @@ export async function runDialChannel(displayName: string): Promise<void> {
       '--channel',
       'dial',
       '--user-id',
-      operatorPhone,
+      pairedNumber,
       '--platform-id',
-      operatorPhone,
+      lineNumber || pairedNumber,
       '--display-name',
       displayName,
       '--agent-name',
@@ -80,11 +89,11 @@ export async function runDialChannel(displayName: string): Promise<void> {
       role,
     ],
     {
-      running: `Connecting ${agentName} to Dial…`,
-      done: `${agentName} is ready. Check your phone for a welcome text.`,
+      running: `Connecting ${agentName} to your Dial line…`,
+      done: `${agentName} is live on ${lineNumber || 'your Dial number'}.`,
     },
     {
-      extraFields: { CHANNEL: 'dial', AGENT_NAME: agentName, PLATFORM_ID: operatorPhone, ROLE: role },
+      extraFields: { CHANNEL: 'dial', AGENT_NAME: agentName, PLATFORM_ID: lineNumber || pairedNumber, ROLE: role },
     },
   );
   if (!init.ok) {
@@ -92,6 +101,55 @@ export async function runDialChannel(displayName: string): Promise<void> {
       'init-first-agent',
       `Couldn't finish connecting ${agentName}.`,
       'You can retry later with `/manage-channels`.',
+    );
+  }
+}
+
+/**
+ * Pairing step: mint a 4-digit code, ask the operator to text it to the Dial
+ * number, and wait for the running adapter to consume it (shared JSON file
+ * under data/). Returns the paired sender's E.164. Uses a dynamic import
+ * because the pairing module ships with the channel (installed by
+ * setup/add-dial.sh above), so it doesn't exist at setup-module load time.
+ */
+async function runPairing(lineNumber: string | null): Promise<string> {
+  const { createPairing, waitForPairing } = await import('../../src/channels/dial-pairing.js');
+  const rec = await createPairing();
+  const target = lineNumber ?? 'your Dial number';
+  p.note(
+    [
+      `   ${accentGreen(rec.code.split('').join('  '))}`,
+      '',
+      `From the phone you want to use, text ${k.bold('only these 4 digits')} to ${k.bold(target)}.`,
+      k.dim('This proves the number is yours; you become the owner.'),
+    ].join('\n'),
+    'Pairing code',
+  );
+  setupLog.userInput('dial_pairing_code_issued', rec.code);
+
+  const s = p.spinner();
+  const start = Date.now();
+  s.start('Waiting for your text…');
+  try {
+    // Cap the wait so setup can't hang forever; the operator can re-run.
+    const consumed = await Promise.race([
+      waitForPairing(rec.code),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5 * 60_000)),
+    ]);
+    const from = consumed.consumed?.fromNumber;
+    if (!from) throw new Error('paired but no number recorded');
+    s.stop(`Paired with ${accentGreen(from)}. ${k.dim(`(${fmtDuration(Date.now() - start)})`)}`);
+    setupLog.step('dial-pair', 'success', Date.now() - start, { PAIRED_NUMBER: from });
+    return from;
+  } catch (err) {
+    const reason = err instanceof Error && err.message === 'timeout' ? 'no code received in time' : String(err);
+    s.stop('Pairing didn’t complete.', 1);
+    setupLog.step('dial-pair', 'failed', Date.now() - start, { ERROR: reason.slice(0, 120) });
+    // fail() returns Promise<never> — control never returns past here.
+    return await fail(
+      'dial-pair',
+      "Didn't receive the pairing code.",
+      'Make sure you texted exactly the 4 digits to the Dial number, then re-run setup.',
     );
   }
 }
@@ -247,15 +305,17 @@ interface NumberListResponse {
   numbers?: Array<{ number?: string }>;
 }
 
-function confirmProvisionedNumber(cliPath: string): void {
+/** Show + return the account's Dial number (the public line). Null if unreadable. */
+function confirmProvisionedNumber(cliPath: string): string | null {
   const list = dialJson<NumberListResponse>(cliPath, ['number', 'list']);
   const numbers = list?.numbers?.map((n) => n.number).filter((n): n is string => !!n) ?? [];
-  if (numbers.length === 0) return; // couldn't read one back; the adapter uses whatever the account has
+  if (numbers.length === 0) return null; // couldn't read one back; adapter uses the account default
   p.note(
-    [`Your agent sends and receives from:`, '', ...numbers.map((n) => `  ${accentGreen(n)}`)].join('\n'),
+    [`Your agent's public line:`, '', ...numbers.map((n) => `  ${accentGreen(n)}`)].join('\n'),
     'Your Dial number',
   );
   setupLog.step('dial-number', 'success', 0, { NUMBERS: numbers.join(',') });
+  return numbers[0];
 }
 
 function ensureListenDaemon(cliPath: string): void {
@@ -318,33 +378,6 @@ async function restartService(): Promise<void> {
     setupLog.step('dial-restart', 'failed', Date.now() - start, { ERROR: message });
     // Non-fatal — the user can restart manually if init-first-agent fails.
   }
-}
-
-async function askOperatorPhone(): Promise<string> {
-  p.note(
-    [
-      'What phone number will you text your assistant from?',
-      '',
-      '  • Use full international format, starting with +',
-      '',
-      k.dim('Example: +14155551234'),
-    ].join('\n'),
-    'Your phone number',
-  );
-  const answer = ensureAnswer(
-    await p.text({
-      message: 'Your phone number',
-      validate: (v) => {
-        const t = (v ?? '').trim();
-        if (!t) return 'Phone number is required';
-        if (!/^\+[1-9]\d{6,14}$/.test(t)) return 'Use E.164 format, e.g. +14155551234';
-        return undefined;
-      },
-    }),
-  ) as string;
-  const phone = answer.trim();
-  setupLog.userInput('dial_operator_phone', phone);
-  return phone;
 }
 
 async function resolveAgentName(): Promise<string> {

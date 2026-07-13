@@ -52,6 +52,7 @@ This is what runs the command-target handler per event. In sandboxes/CI without 
 Skip to **Credentials** if all of these are already in place:
 
 - `src/channels/dial.ts` exists
+- `src/channels/dial-pairing.ts` exists (the SMS pairing store)
 - `src/channels/dial-registration.test.ts` exists
 - `container/skills/dial-cli/SKILL.md` exists (the bundled outbound-tool skill)
 - `src/channels/index.ts` contains `import './dial.js';`
@@ -71,6 +72,8 @@ The `dial-cli` container skill is part of the channel payload (the WhatsApp/Slac
 
 ```bash
 git show origin/channels:src/channels/dial.ts                    > src/channels/dial.ts
+git show origin/channels:src/channels/dial-pairing.ts            > src/channels/dial-pairing.ts
+git show origin/channels:src/channels/dial-pairing.test.ts       > src/channels/dial-pairing.test.ts
 git show origin/channels:src/channels/dial-registration.test.ts  > src/channels/dial-registration.test.ts
 mkdir -p container/skills/dial-cli
 git show origin/channels:container/skills/dial-cli/SKILL.md       > container/skills/dial-cli/SKILL.md

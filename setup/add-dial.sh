@@ -64,6 +64,8 @@ if need_install; then
   log "Copying adapter files from ${CHANNELS_BRANCH}…"
   for f in \
     src/channels/dial.ts \
+    src/channels/dial-pairing.ts \
+    src/channels/dial-pairing.test.ts \
     src/channels/dial-registration.test.ts
   do
     git show "${CHANNELS_BRANCH}:$f" > "$f" || {
