@@ -57,12 +57,6 @@ interface DialConfig {
   /** The account's Dial number (E.164). Used as the shared line's platform_id. */
   fromNumber: string;
   cliPath: string;
-  /**
-   * Optional API base URL. In OneCLI mode this points at the OneCLI gateway,
-   * which fronts api.getdial.ai and injects the real Authorization header from
-   * the vault — so the raw key never has to reach this process.
-   */
-  baseUrl?: string;
 }
 
 function chunkText(text: string, limit: number): string[] {
@@ -115,7 +109,7 @@ const DIAL_DEFAULTS: ChannelDefaults = {
 };
 
 export function createDialAdapter(config: DialConfig): ChannelAdapter {
-  const client = new DialClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
+  const client = new DialClient({ apiKey: config.apiKey });
   const spoolDir = path.join(DATA_DIR, 'dial', 'inbound');
   const handlerPath = path.join(DATA_DIR, 'dial', 'handle-dial-event.sh');
   // The account's default Dial number, used as the fallback line when an
@@ -412,28 +406,32 @@ registerChannelAdapter('dial', {
       /* no auth file — not signed in */
     }
 
-    const env = readEnvFile(['DIAL_CLI_PATH', 'ONECLI_GATEWAY_URL']);
+    const env = readEnvFile(['DIAL_CLI_PATH']);
     const cliPath = process.env.DIAL_CLI_PATH || env.DIAL_CLI_PATH || 'dial';
 
     // ── OneCLI credential mode (opt-in via NANOCLAW_DIAL_ONECLI=1) ──────────
-    // Instead of handing the raw Dial API key to the SDK, route the SDK's HTTP
-    // through the OneCLI gateway: it matches the api.getdial.ai host pattern and
-    // injects `Authorization: Bearer <key>` from the vault, so the raw key never
-    // lives in .env, in auth.v1.json, or in this host process's memory.
-    // (The gateway's CA must be trusted, e.g. via NODE_EXTRA_CA_CERTS.)
+    // OneCLI never hands back a raw secret — it injects credentials into
+    // outgoing requests at the transport layer. So in this mode we DON'T read
+    // the Dial key at all: we pass a placeholder, and the host process's OneCLI
+    // proxy env does the rest — exactly like the agent container:
+    //   HTTPS_PROXY / HTTP_PROXY  → the OneCLI gateway
+    //   NODE_USE_ENV_PROXY=1      → make Node's fetch honor the proxy
+    //   NODE_EXTRA_CA_CERTS       → trust the gateway's MITM CA
+    // The gateway matches the api.getdial.ai host pattern and injects
+    // `Authorization: Bearer <key>` from the vault. Register that secret with
+    // `/add-dial-tool` (host-pattern api.getdial.ai). The raw key never lives in
+    // .env, auth.v1.json, or this process's memory.
     if (process.env.NANOCLAW_DIAL_ONECLI === '1') {
-      const gatewayUrl = process.env.ONECLI_GATEWAY_URL || env.ONECLI_GATEWAY_URL;
-      if (!gatewayUrl) {
-        log.warn('Dial: NANOCLAW_DIAL_ONECLI set but ONECLI_GATEWAY_URL missing — skipping channel');
-        return null;
-      }
       if (!fromNumber) {
         log.warn('Dial: OneCLI mode needs the Dial number — set DIAL_FROM_NUMBER or sign in once — skipping channel');
         return null;
       }
-      log.info('Dial: outbound credentials via the OneCLI gateway (raw key not read locally)');
-      // apiKey is a placeholder; the gateway overrides the Authorization header.
-      return createDialAdapter({ apiKey: 'onecli-injected', fromNumber, cliPath, baseUrl: gatewayUrl });
+      if (!process.env.HTTPS_PROXY && !process.env.https_proxy) {
+        log.warn('Dial: NANOCLAW_DIAL_ONECLI set but no HTTPS_PROXY (OneCLI gateway) in env — outbound key will not be injected');
+      }
+      log.info('Dial: OneCLI mode — key injected by the gateway on outbound requests, not read locally');
+      // Placeholder apiKey; the gateway overrides the Authorization header.
+      return createDialAdapter({ apiKey: 'onecli-injected', fromNumber, cliPath });
     }
 
     // Default: credentials come from Dial's own auth file (written by `dial onboard`).
