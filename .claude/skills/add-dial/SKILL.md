@@ -112,8 +112,11 @@ whether to reuse it or sign in as a different one (matches the old wizard's
 ```nc:run capture:connected_email=.auth.email when:signed_in=true effect:fetch
 dial doctor --json
 ```
+```nc:operator when:signed_in=true
+You're already signed in to Dial as {{connected_email}}.
+```
 ```nc:prompt reuse_choice validate:^(reuse|switch)$ when:signed_in=true
-You're already signed in to Dial as {{connected_email}}. Reuse this account, or sign in as a different one? (reuse/switch)
+Reuse this Dial account, or sign in as a different one? (reuse/switch)
 ```
 
 **Reuse** — no verification needed; onboard just (re)installs the NanoClaw agent skill:
