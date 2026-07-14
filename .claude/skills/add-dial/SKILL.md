@@ -205,13 +205,14 @@ soon as pairing completes.
 
 ## Add phone superpowers (optional)
 
-Offer, right here in the Dial flow, to also install the Dial container tool — the
-`dial` CLI baked into the agent image plus an OneCLI credential — so the agent can
-send SMS and place AI calls from *every* channel it's on (Telegram, WhatsApp, …),
-not just receive/reply on this line:
+Show the pitch as a boxed note, then ask — mirrors the old wizard's `p.note`
++ confirm:
 
+```nc:operator
+Add phone superpowers to your assistant? Say yes so your assistant can send SMS and make AI calls for you from every channel you use it on — Telegram, WhatsApp, and more.
+```
 ```nc:prompt install_tool validate:^(yes|no)$
-Also give your assistant its own phone tool — send SMS and make AI calls for you from every channel you use it on, not just this Dial line? (yes/no)
+Install the Dial tool now?
 ```
 
 If yes, install it (best-effort — this reuses the standalone tool installer, which
