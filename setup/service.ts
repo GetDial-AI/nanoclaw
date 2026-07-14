@@ -147,6 +147,13 @@ function setupLaunchd(
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
 
+  // Pass select env vars from the setup process into the service, so features
+  // toggled at setup time (e.g. NANOCLAW_DIAL_ONECLI) reach the running host.
+  const passthroughEnv = ['NANOCLAW_DIAL_ONECLI', 'DIAL_FROM_NUMBER', 'ONECLI_URL', 'ONECLI_API_KEY']
+    .filter((k) => process.env[k])
+    .map((k) => `        <key>${k}</key>\n        <string>${process.env[k]}</string>`)
+    .join('\n');
+
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -170,6 +177,7 @@ function setupLaunchd(
         <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
         <key>HOME</key>
         <string>${homeDir}</string>
+${passthroughEnv}
     </dict>
     <key>StandardOutPath</key>
     <string>${projectRoot}/logs/nanoclaw.log</string>

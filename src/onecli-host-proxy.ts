@@ -14,9 +14,12 @@
  * Opt-in and best-effort: if OneCLI isn't reachable it logs and leaves the host
  * on a direct connection, so nothing breaks when the flag isn't set.
  */
-import { setGlobalDispatcher, ProxyAgent } from 'undici';
+import { setGlobalDispatcher, getGlobalDispatcher, ProxyAgent, type Dispatcher } from 'undici';
 
 import { log } from './log.js';
+
+/** Hosts whose traffic should be routed through the OneCLI gateway. */
+const PROXY_HOSTS = ['api.getdial.ai'];
 
 let applied = false;
 
@@ -57,16 +60,37 @@ export async function applyOneCliHostProxy(): Promise<boolean> {
   const uri = `http://${m[3]}`;
   const token = 'Basic ' + Buffer.from(`${m[1]}:${m[2]}`).toString('base64');
 
-  setGlobalDispatcher(
-    new ProxyAgent({
-      uri,
-      token,
-      requestTls: cfg.caCertificate ? { ca: cfg.caCertificate } : undefined,
-    }),
-  );
+  const proxy = new ProxyAgent({
+    uri,
+    token,
+    requestTls: cfg.caCertificate ? { ca: cfg.caCertificate } : undefined,
+  });
+  // Route ONLY Dial API traffic through the gateway. A blanket global proxy
+  // would also send the host's own OneCLI control-plane calls (ensureAgent, on
+  // 127.0.0.1) and other local traffic through the gateway and break them, so
+  // fall back to the original (direct) dispatcher for everything else.
+  const direct = getGlobalDispatcher();
+  const hostOf = (origin: string | URL | undefined): string => {
+    try {
+      return typeof origin === 'string' ? new URL(origin).host : (origin?.host ?? '');
+    } catch {
+      return '';
+    }
+  };
+  const router = {
+    dispatch(opts: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandlers) {
+      const host = hostOf(opts.origin);
+      const useProxy = PROXY_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+      return (useProxy ? proxy : direct).dispatch(opts, handler);
+    },
+    close: () => proxy.close(),
+    destroy: () => proxy.destroy(),
+  } as unknown as Dispatcher;
+  setGlobalDispatcher(router);
   applied = true;
-  log.info('OneCLI host proxy applied — host outbound routes through the gateway (credentials injected)', {
+  log.info('OneCLI host proxy applied — Dial API traffic routes through the gateway (credentials injected)', {
     gateway: uri,
+    hosts: PROXY_HOSTS,
   });
   return true;
 }
