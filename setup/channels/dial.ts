@@ -13,6 +13,8 @@
  * unknown_sender_policy 'public' so anyone can reach the agent.
  */
 import { spawnSync } from 'child_process';
+import fs from 'fs';
+import { homedir } from 'os';
 import path from 'path';
 
 import * as p from '@clack/prompts';
@@ -59,6 +61,13 @@ export async function runDialChannel(displayName: string): Promise<void> {
   // find `dial`, so its self-registration fails silently. The wizard has the
   // CLI on PATH — register the handler the adapter just wrote at boot.
   registerCommandTarget(cliPath);
+
+  // #2 — OneCLI channel mode: stash the Dial API key in the vault (host-pattern
+  // api.getdial.ai) so the gateway can inject it into the host's outbound Dial
+  // calls. No manual `onecli secrets create` needed. Opt-in; no-op otherwise.
+  if (process.env.NANOCLAW_DIAL_ONECLI === '1') {
+    registerDialSecretInOneCli();
+  }
 
   // WIRING via pairing: show a 4-digit code; the operator texts it to the Dial
   // number from any phone. The running adapter consumes it (recording the
@@ -116,6 +125,77 @@ export async function runDialChannel(displayName: string): Promise<void> {
   // auth file, so the installer registers the OneCLI credential with no extra
   // auth prompt here.
   await offerDialTool();
+}
+
+/**
+ * #2 — Register the Dial API key in the OneCLI vault so the gateway can inject
+ * it into outbound calls to api.getdial.ai (used by the channel's OneCLI mode).
+ * Reads the key from Dial's auth file (written by `dial onboard`), creates the
+ * secret if absent, and assigns it to every agent so the host's gateway token
+ * resolves it. Best-effort: warns and returns on any gap (OneCLI missing, no
+ * key) — the Dial line still works via the default credential path.
+ */
+function registerDialSecretInOneCli(): void {
+  const authFile = path.join(
+    process.env.XDG_DATA_HOME || path.join(homedir(), '.local', 'share'),
+    'dial',
+    'auth.v1.json',
+  );
+  let apiKey = '';
+  try {
+    apiKey = (JSON.parse(fs.readFileSync(authFile, 'utf8')) as { apiKey?: string }).apiKey ?? '';
+  } catch {
+    /* not signed in */
+  }
+  if (!apiKey) {
+    setupLog.step('dial-onecli-secret', 'skipped', 0, { REASON: 'no_api_key' });
+    return;
+  }
+
+  const onecli = (args: string[]) => spawnSync('onecli', args, { encoding: 'utf8' });
+  if (onecli(['version']).status !== 0) {
+    p.note('OneCLI not found — run /init-onecli, then re-run. The Dial line still works.', 'Skipped OneCLI secret');
+    setupLog.step('dial-onecli-secret', 'skipped', 0, { REASON: 'onecli_missing' });
+    return;
+  }
+
+  const dataOf = (s: string | null): unknown[] => {
+    try {
+      return (JSON.parse(s ?? '') as { data?: unknown[] }).data ?? [];
+    } catch {
+      return [];
+    }
+  };
+  const idOf = (x: unknown): string | undefined =>
+    typeof x === 'string' ? x : ((x as { id?: string })?.id ?? undefined);
+  const nameOf = (x: unknown): string => (x as { name?: string })?.name ?? '';
+
+  let sid = idOf(dataOf(onecli(['secrets', 'list', '--json']).stdout).find((x) => /dial/i.test(nameOf(x))));
+  if (!sid) {
+    const res = onecli([
+      'secrets', 'create', '--name', 'Dial API', '--type', 'generic', '--value', apiKey,
+      '--host-pattern', 'api.getdial.ai', '--header-name', 'Authorization', '--value-format', 'Bearer {value}',
+    ]);
+    if (res.status !== 0) {
+      setupLog.step('dial-onecli-secret', 'failed', 0, { ERROR: (res.stderr || '').slice(0, 120) });
+      return;
+    }
+    sid = idOf(dataOf(onecli(['secrets', 'list', '--json']).stdout).find((x) => /dial/i.test(nameOf(x))));
+  }
+  if (!sid) {
+    setupLog.step('dial-onecli-secret', 'failed', 0, { ERROR: 'no_secret_id' });
+    return;
+  }
+
+  for (const agent of dataOf(onecli(['agents', 'list', '--json']).stdout)) {
+    const aid = idOf(agent);
+    if (!aid) continue;
+    const cur = dataOf(onecli(['agents', 'secrets', '--id', aid, '--json']).stdout).map(idOf).filter(Boolean) as string[];
+    const merged = Array.from(new Set([...cur, sid])).join(',');
+    onecli(['agents', 'set-secrets', '--id', aid, '--secret-ids', merged]);
+  }
+  p.note('Dial API key stored in the OneCLI vault (host-pattern api.getdial.ai).', 'OneCLI secret ready');
+  setupLog.step('dial-onecli-secret', 'success', 0, { SECRET_ID: sid });
 }
 
 /**
