@@ -57,6 +57,12 @@ interface DialConfig {
   /** The account's Dial number (E.164). Used as the shared line's platform_id. */
   fromNumber: string;
   cliPath: string;
+  /**
+   * Optional API base URL. In OneCLI mode this points at the OneCLI gateway,
+   * which fronts api.getdial.ai and injects the real Authorization header from
+   * the vault — so the raw key never has to reach this process.
+   */
+  baseUrl?: string;
 }
 
 function chunkText(text: string, limit: number): string[] {
@@ -109,7 +115,7 @@ const DIAL_DEFAULTS: ChannelDefaults = {
 };
 
 export function createDialAdapter(config: DialConfig): ChannelAdapter {
-  const client = new DialClient({ apiKey: config.apiKey });
+  const client = new DialClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
   const spoolDir = path.join(DATA_DIR, 'dial', 'inbound');
   const handlerPath = path.join(DATA_DIR, 'dial', 'handle-dial-event.sh');
   // The account's default Dial number, used as the fallback line when an
@@ -388,28 +394,53 @@ export function createDialAdapter(config: DialConfig): ChannelAdapter {
 
 registerChannelAdapter('dial', {
   factory: () => {
-    // Credentials come from Dial's own auth file (written by `dial onboard`).
+    // The Dial number (fromNumber) is NOT a secret — it's the public line's
+    // platform_id — so it's always read from Dial's auth file (or overridden
+    // via DIAL_FROM_NUMBER). Only the API key differs between the two modes.
     const authFile = path.join(
       process.env.XDG_DATA_HOME || path.join(homedir(), '.local', 'share'),
       'dial',
       'auth.v1.json',
     );
     let apiKey = '';
-    let fromNumber = '';
+    let fromNumber = process.env.DIAL_FROM_NUMBER ?? '';
     try {
       const auth = JSON.parse(fs.readFileSync(authFile, 'utf8')) as { apiKey?: string; phoneNumber?: string };
       apiKey = auth.apiKey ?? '';
-      fromNumber = auth.phoneNumber ?? '';
+      if (!fromNumber) fromNumber = auth.phoneNumber ?? '';
     } catch {
       /* no auth file — not signed in */
     }
+
+    const env = readEnvFile(['DIAL_CLI_PATH', 'ONECLI_GATEWAY_URL']);
+    const cliPath = process.env.DIAL_CLI_PATH || env.DIAL_CLI_PATH || 'dial';
+
+    // ── OneCLI credential mode (opt-in via NANOCLAW_DIAL_ONECLI=1) ──────────
+    // Instead of handing the raw Dial API key to the SDK, route the SDK's HTTP
+    // through the OneCLI gateway: it matches the api.getdial.ai host pattern and
+    // injects `Authorization: Bearer <key>` from the vault, so the raw key never
+    // lives in .env, in auth.v1.json, or in this host process's memory.
+    // (The gateway's CA must be trusted, e.g. via NODE_EXTRA_CA_CERTS.)
+    if (process.env.NANOCLAW_DIAL_ONECLI === '1') {
+      const gatewayUrl = process.env.ONECLI_GATEWAY_URL || env.ONECLI_GATEWAY_URL;
+      if (!gatewayUrl) {
+        log.warn('Dial: NANOCLAW_DIAL_ONECLI set but ONECLI_GATEWAY_URL missing — skipping channel');
+        return null;
+      }
+      if (!fromNumber) {
+        log.warn('Dial: OneCLI mode needs the Dial number — set DIAL_FROM_NUMBER or sign in once — skipping channel');
+        return null;
+      }
+      log.info('Dial: outbound credentials via the OneCLI gateway (raw key not read locally)');
+      // apiKey is a placeholder; the gateway overrides the Authorization header.
+      return createDialAdapter({ apiKey: 'onecli-injected', fromNumber, cliPath, baseUrl: gatewayUrl });
+    }
+
+    // Default: credentials come from Dial's own auth file (written by `dial onboard`).
     if (!apiKey) {
       log.debug('Dial: not signed in (run `dial signup` + `dial onboard`), skipping channel');
       return null;
     }
-
-    const env = readEnvFile(['DIAL_CLI_PATH']);
-    const cliPath = process.env.DIAL_CLI_PATH || env.DIAL_CLI_PATH || 'dial';
     return createDialAdapter({ apiKey, fromNumber, cliPath });
   },
   defaults: DIAL_DEFAULTS,
