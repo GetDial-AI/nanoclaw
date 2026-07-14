@@ -66,7 +66,7 @@ import { DEFAULT_AGENT_PROVIDER } from '../src/config.js';
 const CLI_AGENT_NAME = 'Terminal Agent';
 const RUN_START = Date.now();
 
-type ChannelChoice = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'teams' | 'slack' | 'imessage' | 'other' | 'skip';
+type ChannelChoice = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'teams' | 'slack' | 'imessage' | 'dial' | 'other' | 'skip';
 
 async function main(): Promise<void> {
   // Make sure ~/.local/bin is on PATH for every child process we spawn.
@@ -581,6 +581,8 @@ async function main(): Promise<void> {
         result = await runChannelSkill('slack', displayName!, { offerBack: true });
       } else if (channelChoice === 'imessage') {
         result = await runChannelSkill('imessage', displayName!, { offerBack: true });
+      } else if (channelChoice === 'dial') {
+        result = await runChannelSkill('dial', displayName!, { offerBack: true });
       } else if (channelChoice === 'other') {
         result = await askOtherChannelName();
       } else {
@@ -719,6 +721,8 @@ function channelDmLabel(choice: ChannelChoice): string | null {
       return 'iMessage';
     case 'slack':
       return 'Slack DMs';
+    case 'dial':
+      return 'phone';
     default:
       return null;
   }
@@ -1275,6 +1279,7 @@ async function askChannelChoice(): Promise<ChannelChoice> {
         { value: 'telegram', label: 'Yes, connect Telegram', hint: 'recommended' },
         { value: 'discord', label: 'Yes, connect Discord' },
         { value: 'whatsapp', label: 'Yes, connect WhatsApp', hint: 'best with a dedicated number' },
+        { value: 'dial', label: 'Yes, connect Dial', hint: 'a dedicated phone number for your agent — place calls, iMessage, SMS — worldwide' },
         {
           value: 'signal',
           label: 'Yes, connect Signal',
