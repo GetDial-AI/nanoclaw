@@ -18,6 +18,7 @@ import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
 import { log } from './log.js';
 import { enforceUpgradeTripwire } from './upgrade-state.js';
+import { applyOneCliHostProxy } from './onecli-host-proxy.js';
 
 // Response + shutdown registries live in response-registry.ts to break the
 // circular import cycle: src/index.ts imports src/modules/index.js for side
@@ -85,6 +86,13 @@ async function main(): Promise<void> {
   // 2. Container runtime
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+
+  // 2.5 OneCLI host proxy — when enabled, route the host's own outbound HTTPS
+  // through the OneCLI gateway BEFORE channel adapters start, so adapters in
+  // OneCLI mode (e.g. Dial) get credentials injected instead of reading raw keys.
+  if (process.env.NANOCLAW_DIAL_ONECLI === '1') {
+    await applyOneCliHostProxy();
+  }
 
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {
