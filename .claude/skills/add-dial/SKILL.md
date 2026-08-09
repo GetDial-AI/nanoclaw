@@ -119,10 +119,11 @@ You're already signed in to Dial as {{connected_email}}.
 Reuse this Dial account, or sign in as a different one? (reuse/switch)
 ```
 
-**Reuse** — no verification needed; onboard just (re)installs the NanoClaw agent skill:
+**Reuse** — no verification needed; with no `--code` the command just (re)installs
+the NanoClaw agent skill:
 
 ```nc:run effect:external when:reuse_choice=reuse
-dial onboard --agent nanoclaw
+dial auth verify-otp --agent nanoclaw
 ```
 
 **Switch (or not signed in)** — verify an email with a one-time code. Collect the email:
@@ -134,7 +135,7 @@ What's your email? Dial sends a one-time code to verify it.
 Send the code (`--force` re-sends even if a prior code is pending):
 
 ```nc:run effect:external when:reuse_choice=switch
-dial signup {{owner_email}} --force
+dial auth login {{owner_email}} --force
 ```
 
 Collect the code (resolves inline, right after the send above):
@@ -146,7 +147,7 @@ Enter the 6-digit code from your email
 Verify it and provision your number (this also installs the NanoClaw agent skill):
 
 ```nc:run effect:external when:reuse_choice=switch
-dial onboard --code {{otp}} --inbound-instruction "You are a friendly AI receptionist answering calls to this number. Greet the caller, ask how you can help, and take a clear message — their name, number, and reason for calling — if you cannot help directly." --agent nanoclaw
+dial auth verify-otp --code {{otp}} --agent nanoclaw
 ```
 
 Confirm the account's number — this becomes the agent's public line (its
@@ -159,7 +160,15 @@ dial number list --json | jq -er '.numbers[0].number'
 Your agent's Dial line is {{platform_id}}.
 ```
 
-Make that line the CLI's default sender. `dial onboard` saves whichever number
+Set the line's inbound behavior — the system prompt the AI uses on calls *into*
+this number. Verification no longer takes an instruction, so a fresh number
+starts on Dial's default greeting until this runs:
+
+```nc:run effect:external
+dial number set {{platform_id}} --inbound-instruction "You are a friendly AI receptionist answering calls to this number. Greet the caller, ask how you can help, and take a clear message — their name, number, and reason for calling — if you cannot help directly."
+```
+
+Make that line the CLI's default sender. Verification saves whichever number
 the account considers primary — the **oldest** one — while the line picked above
 is the **newest** (`numbers[0]`). On a single-number account those coincide, so
 nothing looks wrong; with two or more they diverge permanently, and every
@@ -294,7 +303,7 @@ Dial number later, see the `/add-dial-number` skill.
 
 **`dial: command not found` / the CLI gate fails.** The Dial CLI isn't on PATH. Run `curl -fsSL https://getdial.ai/skills.md` and follow its install steps, then re-run this step.
 
-**The email code never arrives.** Check spam, confirm the address is one you can read, and re-run — `dial signup <email>` re-sends. The code is sent by Dial's servers, not NanoClaw.
+**The email code never arrives.** Check spam, confirm the address is one you can read, and re-run — `dial auth login <email> --force` re-sends. The code is sent by Dial's servers, not NanoClaw.
 
 **Inbound texts/calls don't reach the agent.** `dial listen install` needs a user-service supervisor (launchd/systemd `--user`); sandboxes/CI don't have one. Outbound still works. Start it manually with `dial listen install` once a supervisor is available, and confirm the command target with `dial local-target list`.
 
