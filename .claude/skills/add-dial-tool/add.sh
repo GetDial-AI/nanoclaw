@@ -25,7 +25,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 # Keep the pin in sync with the SKILL.md version note.
-CLI_VERSION="0.33.1"
+CLI_VERSION="0.37.0"
 SKILL_SRC=".claude/skills/add-dial-tool/container-skills/dial-cli"
 AUTH_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/dial/auth.v1.json"
 
