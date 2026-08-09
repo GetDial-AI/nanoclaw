@@ -39,13 +39,13 @@ Read its `ADD_DIAL_TOOL` status block:
 `add.sh` already installed the pinned `dial` CLI on the host. Authenticate with it — this writes the host `auth.json` that `add.sh` reads. Ask the user for an email:
 
 ```bash
-dial auth login "$EMAIL" --force      # emails a 6-digit code
+.claude/skills/add-dial-tool/dial.sh auth login "$EMAIL" --force   # emails a 6-digit code
 ```
 
 Ask the user for the code, then verify it. Do **not** pass `--agent` — this skill owns the container `dial-cli` skill, and `--agent nanoclaw` would inject a second, unmanaged copy:
 
 ```bash
-dial auth verify-otp --code "$CODE"
+.claude/skills/add-dial-tool/dial.sh auth verify-otp --code "$CODE"
 ```
 
 Re-run the installer — it now reads the key from the host `auth.json` and registers it with OneCLI:
