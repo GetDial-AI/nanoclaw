@@ -13,6 +13,7 @@
  * the URL offer, the prose-derived validation message.
  */
 import { execSync, spawn } from 'node:child_process';
+import { spawn as ptySpawn } from 'node-pty';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
@@ -311,35 +312,53 @@ export function hostExec(projectRoot: string, rawLog?: string): (cmd: string) =>
  * fields so the engine can `capture:<var>=<FIELD>` them. The block protocol mirrors
  * setup/lib/runner.ts's StatusStream — a step is just a command that emits blocks.
  */
+/** Status-block delimiters, also used to hold back a partial line that might open one. */
+const BLOCK_OPEN = '=== NANOCLAW SETUP: ';
+const END_MARK = '=== END ===';
+
 export function hostExecStream(projectRoot: string): (cmd: string) => Promise<StepOutcome> {
   return (cmd) =>
     new Promise((resolve) => {
-      const child = spawn('bash', ['-c', cmd], {
-        cwd: projectRoot,
-        env: {
-          ...process.env,
-          PATH: `${join(projectRoot, 'bin')}:${process.env.PATH ?? ''}`,
-          // A step renders curated operator UI (a code card, a QR) — the host
-          // logger's info noise doesn't belong on the wizard screen, and it
-          // always emits ANSI so it can't be filtered by stream. Warnings and
-          // errors still pass. An operator-set LOG_LEVEL wins (debugging).
-          LOG_LEVEL: process.env.LOG_LEVEL ?? 'warn',
-          // The child's stdout is a pipe, so picocolors would strip its clack
-          // rendering to bare box chars that clash with the wizard theme.
-          // When the OPERATOR's terminal is a real TTY, the teed lines land
-          // there — force color so the child's card matches the parent.
-          ...(process.stdout.isTTY ? { FORCE_COLOR: '1' } : {}),
-        },
-        stdio: ['inherit', 'pipe', 'pipe'],
-      });
+      const env: Record<string, string> = {
+        ...(process.env as Record<string, string>),
+        PATH: `${join(projectRoot, 'bin')}:${process.env.PATH ?? ''}`,
+        // A step renders curated operator UI (a code card, a QR) — the host
+        // logger's info noise doesn't belong on the wizard screen, and it
+        // always emits ANSI so it can't be filtered by stream. Warnings and
+        // errors still pass. An operator-set LOG_LEVEL wins (debugging).
+        LOG_LEVEL: process.env.LOG_LEVEL ?? 'warn',
+      };
+
+      // A step that PROMPTS needs a real TTY on its stdout: clack draws the
+      // answer as you type by writing back to the terminal, and a pipe makes
+      // isTTY false, so nothing appears until the line is submitted. Give the
+      // child a pty when the operator has a terminal to lend, and keep parsing
+      // its output for the `=== NANOCLAW SETUP: TYPE ===` blocks the engine
+      // captures. Without a TTY (CI, headless) fall back to the pipe: nobody is
+      // there to type, and a pty would only add a dependency to the failure path.
+      const interactive = process.stdout.isTTY && process.stdin.isTTY;
+
       const blocks: Array<{ fields: Record<string, string> }> = [];
       let current: { fields: Record<string, string> } | null = null;
       let buf = '';
-      const onChunk = (chunk: Buffer): void => {
-        buf += chunk.toString('utf8');
+
+      /** True while `partial` could still grow into a status-block delimiter. */
+      const mayOpenBlock = (partial: string): boolean =>
+        BLOCK_OPEN.startsWith(partial.slice(0, BLOCK_OPEN.length)) ||
+        END_MARK.startsWith(partial.slice(0, END_MARK.length));
+
+      /**
+       * Consume output. Complete lines are classified: a status block is parsed
+       * and hidden, anything else is operator-facing and shown. In interactive
+       * mode the trailing partial line is flushed too — that is what makes a
+       * keystroke appear before Enter — unless it might be the start of a block,
+       * which would leak the protocol onto the screen.
+       */
+      const onChunk = (text: string): void => {
+        buf += text;
         let idx: number;
         while ((idx = buf.indexOf('\n')) !== -1) {
-          const line = buf.slice(0, idx);
+          const line = buf.slice(0, idx).replace(/\r$/, '');
           buf = buf.slice(idx + 1);
           if (/^=== NANOCLAW SETUP: \S+ ===/.test(line)) {
             current = { fields: {} };
@@ -357,13 +376,60 @@ export function hostExecStream(projectRoot: string): (cmd: string) => Promise<St
           }
           process.stdout.write(line + '\n'); // operator-facing line (a QR, a code) — show it live
         }
+        if (interactive && buf && !current && !mayOpenBlock(buf)) {
+          process.stdout.write(buf);
+          buf = '';
+        }
       };
-      child.stdout.on('data', onChunk);
-      child.stderr.on('data', onChunk);
-      child.on('close', (code) => {
+
+      const settle = (code: number): void => {
         const terminal = [...blocks].reverse().find((b) => b.fields.STATUS) ?? null;
         const status = terminal?.fields.STATUS;
         resolve({ ok: code === 0 && (status === 'success' || status === 'skipped'), fields: terminal?.fields ?? {} });
+      };
+
+      if (!interactive) {
+        const child = spawn('bash', ['-c', cmd], { cwd: projectRoot, env, stdio: ['inherit', 'pipe', 'pipe'] });
+        child.stdout.on('data', (c: Buffer) => onChunk(c.toString('utf8')));
+        child.stderr.on('data', (c: Buffer) => onChunk(c.toString('utf8')));
+        child.on('close', (code) => settle(code ?? 1));
+        return;
+      }
+
+      // The child believes it owns a terminal, so clack renders normally and
+      // FORCE_COLOR is unnecessary — the pty reports colour support itself.
+      const child = ptySpawn('bash', ['-c', cmd], {
+        cwd: projectRoot,
+        env,
+        name: process.env.TERM ?? 'xterm-256color',
+        cols: process.stdout.columns ?? 80,
+        rows: process.stdout.rows ?? 24,
+      });
+
+      // Keystrokes reach the child through the pty, not inherited stdin: raw
+      // mode so the child's own line editing (and clack's) sees every key.
+      const wasRaw = process.stdin.isRaw === true;
+      const forward = (d: Buffer): void => child.write(d.toString('utf8'));
+      if (process.stdin.setRawMode) process.stdin.setRawMode(true);
+      process.stdin.resume();
+      process.stdin.on('data', forward);
+      const onResize = (): void => child.resize(process.stdout.columns ?? 80, process.stdout.rows ?? 24);
+      process.stdout.on('resize', onResize);
+      const release = (): void => {
+        process.stdin.off('data', forward);
+        process.stdout.off('resize', onResize);
+        if (process.stdin.setRawMode) process.stdin.setRawMode(wasRaw);
+        process.stdin.pause();
+      };
+
+      child.onData(onChunk);
+      child.onExit(({ exitCode }) => {
+        release();
+        if (buf) {
+          process.stdout.write(buf);
+          buf = '';
+        }
+        settle(exitCode);
       });
     });
 }
